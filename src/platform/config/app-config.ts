@@ -3,6 +3,8 @@ export type NodeEnv = 'development' | 'test' | 'production';
 export interface AppConfig {
   NODE_ENV: NodeEnv;
   PORT: number;
+  /** Number of trusted reverse-proxy hops in front of the app; 0 trusts none. */
+  TRUST_PROXY_HOPS: number;
   DATABASE_URL: string;
   FIREBASE_PROJECT_ID: string;
   /** Raw service-account JSON (a secret); absent means Application Default Credentials. */
@@ -39,6 +41,17 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
   const port = Number(raw.PORT ?? 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     problems.push('PORT must be an integer between 1 and 65535');
+  }
+
+  const rawHops = raw.TRUST_PROXY_HOPS;
+  const hops = rawHops === undefined || rawHops === null ? 0 : Number(rawHops);
+  if (
+    typeof rawHops === 'boolean' ||
+    (typeof rawHops === 'string' && rawHops.trim() === '') ||
+    !Number.isInteger(hops) ||
+    hops < 0
+  ) {
+    problems.push('TRUST_PROXY_HOPS must be a non-negative integer');
   }
 
   const databaseUrl = raw.DATABASE_URL;
@@ -85,6 +98,7 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
   return {
     NODE_ENV: nodeEnv as NodeEnv,
     PORT: port,
+    TRUST_PROXY_HOPS: hops,
     DATABASE_URL: databaseUrl as string,
     FIREBASE_PROJECT_ID: projectId as string,
     FIREBASE_CREDENTIALS_JSON: credentials,

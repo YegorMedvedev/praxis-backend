@@ -10,6 +10,7 @@ describe('validateEnv', () => {
     expect(validateEnv(base)).toEqual({
       NODE_ENV: 'development',
       PORT: 3000,
+      TRUST_PROXY_HOPS: 0,
       DATABASE_URL: 'postgres://db/praxis',
       FIREBASE_PROJECT_ID: 'fake-project',
       FIREBASE_CREDENTIALS_JSON: undefined,
@@ -98,6 +99,24 @@ describe('validateEnv', () => {
           FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099',
         }),
       ).toThrow(/FIREBASE_AUTH_EMULATOR_HOST.*production/);
+    });
+  });
+
+  describe('TRUST_PROXY_HOPS', () => {
+    it('defaults to 0 (no proxy trusted)', () => {
+      expect(validateEnv(base).TRUST_PROXY_HOPS).toBe(0);
+    });
+
+    it('accepts a non-negative integer', () => {
+      expect(
+        validateEnv({ ...base, TRUST_PROXY_HOPS: '1' }).TRUST_PROXY_HOPS,
+      ).toBe(1);
+    });
+
+    it.each(['-1', '1.5', 'true', 'abc', ''])('rejects %p', (value) => {
+      expect(() => validateEnv({ ...base, TRUST_PROXY_HOPS: value })).toThrow(
+        'TRUST_PROXY_HOPS must be a non-negative integer',
+      );
     });
   });
 });

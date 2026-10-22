@@ -5,6 +5,12 @@ export const ERROR_CODES = [
   'unauthenticated',
   'forbidden',
   'incomplete-identity',
+  'token-expired',
+  'account-disabled',
+  'profile-not-found',
+  'invalid-request',
+  'rate-limited',
+  'service-unavailable',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -44,4 +50,61 @@ export class ForbiddenError extends DomainError {
 
 export class IncompleteIdentityError extends DomainError {
   readonly code = 'incomplete-identity';
+}
+
+export class TokenExpiredError extends DomainError {
+  readonly code = 'token-expired';
+}
+
+export class AccountDisabledError extends DomainError {
+  readonly code = 'account-disabled';
+}
+
+export class ProfileNotFoundError extends DomainError {
+  readonly code = 'profile-not-found';
+}
+
+export class ServiceUnavailableError extends DomainError {
+  readonly code = 'service-unavailable';
+}
+
+/** Master list of `invalid_params` reasons (spec signup-login/06). */
+export const INVALID_PARAM_REASONS = [
+  'REQUIRED',
+  'TOO_SHORT',
+  'TOO_LONG',
+  'INVALID_TYPE',
+  'INVALID_VALUE',
+  'UNKNOWN_VERSION',
+  'OUT_OF_RANGE',
+] as const;
+
+export type InvalidParamReason = (typeof INVALID_PARAM_REASONS)[number];
+
+export interface InvalidParam {
+  name: string;
+  reason: InvalidParamReason;
+}
+
+export class InvalidRequestError extends DomainError {
+  readonly code = 'invalid-request';
+
+  constructor(
+    message: string,
+    readonly params: readonly InvalidParam[] = [],
+  ) {
+    super(message);
+  }
+}
+
+export class RateLimitedError extends DomainError {
+  readonly code = 'rate-limited';
+
+  constructor(
+    message: string,
+    /** Whole seconds until the caller may retry. */
+    readonly retryAfterSeconds: number,
+  ) {
+    super(message);
+  }
 }

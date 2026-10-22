@@ -1,5 +1,7 @@
 # 05 Reset email and action domain setup
 
+> **Amended by product owner:** reset emails are sent by **Resend**, not by Firebase's built-in mailer. Read "Firebase template" below as "Resend email built by the backend": the EN/RU content, sender/domain authentication (SPF, DKIM, DMARC on the Resend-verified domain) and the `<web origin>/auth-action` link requirements still apply. The Firebase console template and Firebase-default-sender statements do not. Config is in `AGENTS.md` ("Password reset configuration"). This task now includes code (a mailer port with a Resend adapter, plus a fake for tests).
+
 - **Milestone:** Sign-up & Log-in
 - **Screens covered:** none (the emailed link opens the screens in app/signup-login/05)
 - **Depends on:** backend/signup-login/01 (Firebase project)
