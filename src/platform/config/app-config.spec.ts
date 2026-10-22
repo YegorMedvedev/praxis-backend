@@ -3,6 +3,8 @@ import { validateEnv } from './app-config';
 const base = {
   DATABASE_URL: 'postgres://db/praxis',
   FIREBASE_PROJECT_ID: 'fake-project',
+  CONSENT_TERMS_VERSIONS: 'T1',
+  CONSENT_PRIVACY_VERSIONS: 'P1',
 };
 
 describe('validateEnv', () => {
@@ -15,7 +17,33 @@ describe('validateEnv', () => {
       FIREBASE_PROJECT_ID: 'fake-project',
       FIREBASE_CREDENTIALS_JSON: undefined,
       FIREBASE_AUTH_EMULATOR_HOST: undefined,
+      CONSENT_TERMS_VERSIONS: ['T1'],
+      CONSENT_PRIVACY_VERSIONS: ['P1'],
     });
+  });
+
+  describe('consent versions', () => {
+    it('parses comma-separated lists, trimming and de-duplicating', () => {
+      const config = validateEnv({
+        ...base,
+        CONSENT_TERMS_VERSIONS: ' T1, T2 ,T1',
+        CONSENT_PRIVACY_VERSIONS: 'P1,P2',
+      });
+      expect(config.CONSENT_TERMS_VERSIONS).toEqual(['T1', 'T2']);
+      expect(config.CONSENT_PRIVACY_VERSIONS).toEqual(['P1', 'P2']);
+    });
+
+    it.each([undefined, '', '  ', 'T1,', ',', 'T1,,T2'])(
+      'requires CONSENT_TERMS_VERSIONS and CONSENT_PRIVACY_VERSIONS (%p)',
+      (value) => {
+        expect(() =>
+          validateEnv({ ...base, CONSENT_TERMS_VERSIONS: value }),
+        ).toThrow('CONSENT_TERMS_VERSIONS is required');
+        expect(() =>
+          validateEnv({ ...base, CONSENT_PRIVACY_VERSIONS: value }),
+        ).toThrow('CONSENT_PRIVACY_VERSIONS is required');
+      },
+    );
   });
 
   it('fails when DATABASE_URL is missing', () => {
@@ -41,7 +69,11 @@ describe('validateEnv', () => {
       'requires FIREBASE_PROJECT_ID (%p)',
       (value) => {
         expect(() =>
-          validateEnv({ DATABASE_URL: 'x', FIREBASE_PROJECT_ID: value }),
+          validateEnv({
+            ...base,
+            DATABASE_URL: 'x',
+            FIREBASE_PROJECT_ID: value,
+          }),
         ).toThrow('FIREBASE_PROJECT_ID is required');
       },
     );

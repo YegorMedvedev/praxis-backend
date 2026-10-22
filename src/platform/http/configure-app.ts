@@ -1,31 +1,15 @@
-import {
-  INestApplication,
-  Logger,
-  ValidationError,
-  ValidationPipe,
-} from '@nestjs/common';
+import { INestApplication, Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import type { AppConfig } from '../config/app-config';
 import { flowIdMiddleware } from './flow-id';
 import { jsonContentTypeMiddleware, MAX_BODY_BYTES } from './json-content-type';
-import type { FieldError } from './problem-details';
 import { requestLoggingMiddleware } from './request-logging';
-import { RequestValidationException } from './request-validation.exception';
+import { InvalidRequestError } from '../../shared/domain-error';
+import { toInvalidParams } from './validation-params';
 
 export const API_PREFIX = 'api/v1';
-
-function flatten(errors: ValidationError[], parent = ''): FieldError[] {
-  return errors.flatMap((error) => {
-    const field = parent ? `${parent}.${error.property}` : error.property;
-    const own = Object.keys(error.constraints ?? {}).map((reason) => ({
-      field,
-      reason,
-    }));
-    return [...own, ...flatten(error.children ?? [], field)];
-  });
-}
 
 /**
  * Trusts exactly `hops` reverse proxies for `req.ip` (X-Forwarded-For). An
@@ -61,7 +45,10 @@ export function configureApp(app: INestApplication): void {
     new ValidationPipe({
       transform: true,
       exceptionFactory: (errors) =>
-        new RequestValidationException(flatten(errors)),
+        new InvalidRequestError(
+          'Request validation failed',
+          toInvalidParams(errors),
+        ),
     }),
   );
 

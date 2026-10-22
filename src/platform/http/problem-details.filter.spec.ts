@@ -20,7 +20,6 @@ import {
   ValidationFailedError,
 } from '../../shared/domain-error';
 import { ProblemDetailsFilter } from './problem-details.filter';
-import { RequestValidationException } from './request-validation.exception';
 import type { RouteMethods } from './route-methods';
 
 interface RunOptions {
@@ -230,13 +229,23 @@ describe('ProblemDetailsFilter', () => {
     });
   });
 
-  it('adds per-field errors for request validation failures', () => {
+  it('renders request validation failures as invalid-request with invalid_params', () => {
     const { status, body } = run(
-      new RequestValidationException([{ field: 'email', reason: 'isEmail' }]),
+      new InvalidRequestError('Request validation failed', [
+        { name: 'name', reason: 'REQUIRED' },
+      ]),
     );
 
-    expect(status).toBe(422);
-    expect(body.errors).toEqual([{ field: 'email', reason: 'isEmail' }]);
+    expect(status).toBe(400);
+    expect(body.type).toBe('/problems/invalid-request');
+    expect(body.invalid_params).toEqual([{ name: 'name', reason: 'REQUIRED' }]);
+    expect(body).not.toHaveProperty('errors');
+  });
+
+  it('marks every problem response as not cacheable', () => {
+    expect(run(new ConflictError('x')).headers['Cache-Control']).toBe(
+      'no-store',
+    );
   });
 
   it('hides internals of unexpected errors and drops the query string', () => {

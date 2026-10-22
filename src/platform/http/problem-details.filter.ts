@@ -21,7 +21,6 @@ import {
   type ProblemDetails,
   type ProblemName,
 } from './problem-details';
-import { RequestValidationException } from './request-validation.exception';
 import { RouteMethods } from './route-methods';
 
 const STATUS_TO_PROBLEM: Record<number, ProblemName> = {
@@ -84,6 +83,9 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     const { problem, headers } = this.resolve(exception, request);
 
     response.setHeader(FLOW_ID_HEADER, flowId);
+    // Errors (including body-parser rejections that precede any route
+    // middleware) must never be cached.
+    response.setHeader('Cache-Control', 'no-store');
     for (const [name, value] of Object.entries(headers)) {
       response.setHeader(name, value);
     }
@@ -114,13 +116,6 @@ export class ProblemDetailsFilter implements ExceptionFilter {
         this.build(exception.code, instance, exception.message, extra),
         headers,
       );
-    }
-
-    if (exception instanceof RequestValidationException) {
-      return this.finish({
-        ...this.build('validation-failed', instance),
-        errors: exception.errors,
-      });
     }
 
     const status = httpStatusOf(exception);

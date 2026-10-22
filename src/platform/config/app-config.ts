@@ -11,6 +11,10 @@ export interface AppConfig {
   FIREBASE_CREDENTIALS_JSON?: string;
   /** host:port of the Firebase Auth emulator; never allowed in production. */
   FIREBASE_AUTH_EMULATOR_HOST?: string;
+  /** Recognised Terms of Service version identifiers (comma-separated in env). */
+  CONSENT_TERMS_VERSIONS: string[];
+  /** Recognised Privacy Policy version identifiers (comma-separated in env). */
+  CONSENT_PRIVACY_VERSIONS: string[];
 }
 
 const NODE_ENVS: readonly string[] = ['development', 'test', 'production'];
@@ -24,6 +28,16 @@ function isJsonObject(text: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Parses a required comma-separated list; returns undefined when unusable. */
+function parseList(value: unknown): string[] | undefined {
+  if (typeof value !== 'string') return undefined;
+  const items = value.split(',').map((item) => item.trim());
+  if (items.length === 0 || items.some((item) => item.length === 0)) {
+    return undefined;
+  }
+  return [...new Set(items)];
 }
 
 /**
@@ -91,6 +105,19 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     }
   }
 
+  const termsVersions = parseList(raw.CONSENT_TERMS_VERSIONS);
+  if (!termsVersions) {
+    problems.push(
+      'CONSENT_TERMS_VERSIONS is required (comma-separated, no empty items)',
+    );
+  }
+  const privacyVersions = parseList(raw.CONSENT_PRIVACY_VERSIONS);
+  if (!privacyVersions) {
+    problems.push(
+      'CONSENT_PRIVACY_VERSIONS is required (comma-separated, no empty items)',
+    );
+  }
+
   if (problems.length > 0) {
     throw new Error(`Invalid environment: ${problems.join('; ')}`);
   }
@@ -103,5 +130,7 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     FIREBASE_PROJECT_ID: projectId as string,
     FIREBASE_CREDENTIALS_JSON: credentials,
     FIREBASE_AUTH_EMULATOR_HOST: emulatorHost,
+    CONSENT_TERMS_VERSIONS: termsVersions as string[],
+    CONSENT_PRIVACY_VERSIONS: privacyVersions as string[],
   };
 }

@@ -57,11 +57,6 @@ export const PROBLEMS: Record<ProblemName, ProblemDefinition> = {
   },
 };
 
-export interface FieldError {
-  field: string;
-  reason: string;
-}
-
 export interface InvalidParamEntry {
   name: string;
   reason: string;
@@ -74,7 +69,6 @@ export interface ProblemDetails {
   detail?: string;
   instance: string;
   flow_id: string;
-  errors?: FieldError[];
   invalid_params?: InvalidParamEntry[];
 }
 

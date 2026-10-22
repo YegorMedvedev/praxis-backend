@@ -4,6 +4,7 @@ import { AuthModule } from './platform/auth/auth.module';
 import { DatabaseModule } from './platform/database/database.module';
 import { EventsModule } from './platform/events/events.module';
 import { HttpPlatformModule } from './platform/http/http.module';
+import { UsersModule } from './modules/users/users.public-api';
 import { SystemModule } from './platform/system/system.module';
 
 @Module({
@@ -15,6 +16,7 @@ import { SystemModule } from './platform/system/system.module';
     HttpPlatformModule,
     AuthModule,
     // Business modules are registered here via their public API.
+    UsersModule,
   ],
 })
 export class AppModule {}
