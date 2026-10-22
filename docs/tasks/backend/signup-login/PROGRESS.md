@@ -5,7 +5,7 @@ Order follows each spec's `Depends on:`. Serial execution (01 → 06 → 05); 05
 | Task | Status | Commit | Notes |
 |---|---|---|---|
 | 01 firebase-project-setup | partial | f922591 | Console work is human-only (see HUMAN-REQUIRED.md). Code side done: Firebase env config + validation, emulator/production guard. Console work blocked on human. Reviewed by orchestrator directly (config-only diff). Docker tests need `TESTCONTAINERS_RYUK_DISABLED=true` and Node 24 (dependency-cruiser rejects Node 25) on this machine. |
-| 06a platform plumbing (part of 06) | done | (pending) | Problem types, X-Flow-ID, Firebase token verification (emulator e2e), rate limit, logging, bearerAuth. 1 review + 1 fix round.
+| 06a platform plumbing (part of 06) | done | a42a0f0 | Problem types, X-Flow-ID, Firebase token verification (emulator e2e), rate limit, logging, bearerAuth. 1 review + 1 fix round.
 | 06b /me (part of 06) | todo | | `users` module, GET/PUT /me, consent versions config, switch ValidationPipe to 400 invalid-request + invalid_params. |
 | 05 reset-email-and-action-domain-setup | todo | | Depends on 01. Console/DNS work is human-only. Code side: mailer port, Resend adapter, fake, reset-link use case + endpoint. |
 
