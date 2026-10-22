@@ -1,10 +1,18 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { AppConfigModule } from './platform/config/app-config.module';
+import { DatabaseModule } from './platform/database/database.module';
+import { EventsModule } from './platform/events/events.module';
+import { HttpPlatformModule } from './platform/http/http.module';
+import { SystemModule } from './platform/system/system.module';
 
 @Module({
-  imports: [],
-  controllers: [AppController],
-  providers: [AppService],
+  imports: [
+    AppConfigModule,
+    SystemModule,
+    EventsModule,
+    DatabaseModule,
+    HttpPlatformModule,
+    // Business modules are registered here via their public API.
+  ],
 })
 export class AppModule {}

@@ -1,0 +1,88 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "off",
+    "@typescript-eslint/no-floating-promises": "warn"
+  },
+  "env": {
+    "node": true
+  },
+  "overrides": [
+    {
+      "files": ["src/shared/**/*.ts", "src/modules/*/domain/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@nestjs/*",
+                  "typeorm",
+                  "pg",
+                  "rxjs",
+                  "express",
+                  "class-validator",
+                  "class-transformer"
+                ],
+                "message": "shared/ and domain/ are framework-free."
+              },
+              {
+                "group": ["**/platform/**"],
+                "message": "Dependencies point inward: no platform imports."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/modules/*/application/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "@nestjs/*",
+                  "typeorm",
+                  "pg",
+                  "rxjs",
+                  "express",
+                  "class-validator",
+                  "class-transformer"
+                ],
+                "message": "application/ is framework-free; wire use cases with useFactory."
+              },
+              {
+                "group": [
+                  "**/infrastructure/**",
+                  "**/presentation/**",
+                  "**/platform/**"
+                ],
+                "message": "Dependencies point inward."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/modules/*/presentation/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/infrastructure/**", "typeorm", "@nestjs/typeorm"],
+                "message": "Controllers depend on use cases, not infrastructure."
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
