@@ -7,7 +7,7 @@ Order follows each spec's `Depends on:`. Serial execution (01 → 06 → 05); 05
 | 01 firebase-project-setup | partial | f922591 | Console work is human-only (see HUMAN-REQUIRED.md). Code side done: Firebase env config + validation, emulator/production guard. Console work blocked on human. Reviewed by orchestrator directly (config-only diff). Docker tests need `TESTCONTAINERS_RYUK_DISABLED=true` and Node 24 (dependency-cruiser rejects Node 25) on this machine. |
 | 06a platform plumbing (part of 06) | done | a42a0f0 | Problem types, X-Flow-ID, Firebase token verification (emulator e2e), rate limit, logging, bearerAuth. 1 review + 1 fix round.
 | 06b /me (part of 06) | done | 8bd3d5e | `users` module, GET/PUT /me, consent versions config, ValidationPipe now 400 invalid-request + invalid_params. 1 review + 1 fix round. Email not persisted (taken from token). 403 incomplete-identity for tokens without email is an assumption. |
-| 05 reset-email-and-action-domain-setup | partial | (pending) | Depends on 01. Console/DNS work is human-only. Code side done: mailer port, Resend adapter, fake, reset-link use case + endpoint (1 review + 1 fix round). Console/DNS/Resend account/copy blocked on human. |
+| 05 reset-email-and-action-domain-setup | partial | 39f9e8b | Depends on 01. Console/DNS work is human-only. Code side done: mailer port, Resend adapter, fake, reset-link use case + endpoint (1 review + 1 fix round). Console/DNS/Resend account/copy blocked on human. |
 
 ## Spec conflicts and assumptions (running list)
 
