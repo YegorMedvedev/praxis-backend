@@ -1,0 +1,16 @@
+export const PASSWORD_RESET_LINK_GENERATOR = Symbol(
+  'PASSWORD_RESET_LINK_GENERATOR',
+);
+export const PASSWORD_RESET_MAILER = Symbol('PASSWORD_RESET_MAILER');
+export const PASSWORD_RESET_FAILURE_REPORTER = Symbol(
+  'PASSWORD_RESET_FAILURE_REPORTER',
+);
+export const PASSWORD_RESET_RATE_LIMITER = Symbol(
+  'PASSWORD_RESET_RATE_LIMITER',
+);
+/** `fetch`-compatible HTTP client used by the Resend adapter (mockable). */
+export const RESEND_HTTP_CLIENT = Symbol('RESEND_HTTP_CLIENT');
+export const PASSWORD_RESET_BACKGROUND_RUNNER = Symbol(
+  'PASSWORD_RESET_BACKGROUND_RUNNER',
+);
+export const PASSWORD_RESET_THROTTLE = Symbol('PASSWORD_RESET_THROTTLE');

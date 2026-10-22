@@ -1,4 +1,5 @@
 import type { ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Clock } from '../../shared/clock';
 import {
   RateLimitedError,
@@ -9,6 +10,7 @@ import {
 import { RateLimiter } from '../http/rate-limiter';
 import { AuthGuard, type AuthenticatedRequest } from './auth.guard';
 import type { AuthenticatedIdentity } from './identity';
+import { Public } from './public.decorator';
 import type { TokenVerifier } from './token-verifier';
 
 class FakeVerifier implements TokenVerifier {
@@ -24,11 +26,24 @@ class FakeVerifier implements TokenVerifier {
 
 const clock: Clock = { now: () => new Date(0) };
 
-function contextFor(request: Partial<AuthenticatedRequest>) {
+class Handlers {
+  secured() {}
+  @Public()
+  open() {}
+}
+
+function contextFor(
+  request: Partial<AuthenticatedRequest>,
+  handler: () => void = Handlers.prototype.secured,
+) {
   return {
     switchToHttp: () => ({ getRequest: () => request }),
+    getHandler: () => handler,
+    getClass: () => Handlers,
   } as unknown as ExecutionContext;
 }
+
+const reflector = new Reflector();
 
 function requestWith(authorization?: string, ip = '10.0.0.1') {
   return {
@@ -42,7 +57,7 @@ describe('AuthGuard', () => {
 
   it('attaches the verified identity to the request', async () => {
     const verifier = new FakeVerifier(identity);
-    const guard = new AuthGuard(verifier, new RateLimiter(clock));
+    const guard = new AuthGuard(verifier, new RateLimiter(clock), reflector);
     const request = requestWith('Bearer abc.def.ghi');
 
     await expect(guard.canActivate(contextFor(request))).resolves.toBe(true);
@@ -55,7 +70,7 @@ describe('AuthGuard', () => {
     'rejects header %p as unauthenticated without calling the verifier',
     async (header) => {
       const verifier = new FakeVerifier(identity);
-      const guard = new AuthGuard(verifier, new RateLimiter(clock));
+      const guard = new AuthGuard(verifier, new RateLimiter(clock), reflector);
 
       await expect(
         guard.canActivate(contextFor(requestWith(header))),
@@ -68,6 +83,7 @@ describe('AuthGuard', () => {
     const guard = new AuthGuard(
       new FakeVerifier(identity),
       new RateLimiter(clock),
+      reflector,
     );
 
     await expect(
@@ -80,6 +96,7 @@ describe('AuthGuard', () => {
     const guard = new AuthGuard(
       new FakeVerifier(expired),
       new RateLimiter(clock),
+      reflector,
     );
 
     await expect(
@@ -89,7 +106,7 @@ describe('AuthGuard', () => {
 
   it('limits authenticated callers per uid', async () => {
     const limiter = new RateLimiter(clock, { limit: 2, windowMs: 60_000 });
-    const guard = new AuthGuard(new FakeVerifier(identity), limiter);
+    const guard = new AuthGuard(new FakeVerifier(identity), limiter, reflector);
     const call = (ip: string) =>
       guard.canActivate(contextFor(requestWith('Bearer t', ip)));
 
@@ -107,6 +124,7 @@ describe('AuthGuard', () => {
     const guard = new AuthGuard(
       new FakeVerifier(new UnauthenticatedError('x')),
       limiter,
+      reflector,
     );
     const call = (ip: string) =>
       guard.canActivate(contextFor(requestWith('Bearer t', ip)));
@@ -122,6 +140,7 @@ describe('AuthGuard', () => {
     const guard = new AuthGuard(
       new FakeVerifier(new ServiceUnavailableError('down')),
       limiter,
+      reflector,
     );
 
     for (let i = 0; i < 3; i++) {
@@ -129,5 +148,51 @@ describe('AuthGuard', () => {
         guard.canActivate(contextFor(requestWith('Bearer t'))),
       ).rejects.toBeInstanceOf(ServiceUnavailableError);
     }
+  });
+
+  describe('@Public() routes', () => {
+    it('skips token verification and attaches no identity', async () => {
+      const verifier = new FakeVerifier(identity);
+      const guard = new AuthGuard(verifier, new RateLimiter(clock), reflector);
+      const request = requestWith('Bearer would.be.ignored');
+
+      await expect(
+        guard.canActivate(contextFor(request, Handlers.prototype.open)),
+      ).resolves.toBe(true);
+
+      expect(verifier.seen).toEqual([]);
+      expect(request.identity).toBeUndefined();
+    });
+
+    it('charges every public request to the client IP limit', async () => {
+      const limiter = new RateLimiter(clock, { limit: 2, windowMs: 60_000 });
+      const guard = new AuthGuard(
+        new FakeVerifier(identity),
+        limiter,
+        reflector,
+      );
+      const call = (ip: string) =>
+        guard.canActivate(
+          contextFor(requestWith(undefined, ip), Handlers.prototype.open),
+        );
+
+      await call('1.1.1.1');
+      await call('1.1.1.1');
+
+      await expect(call('1.1.1.1')).rejects.toBeInstanceOf(RateLimitedError);
+      await expect(call('2.2.2.2')).resolves.toBe(true);
+    });
+
+    it('does not make other routes public', async () => {
+      const guard = new AuthGuard(
+        new FakeVerifier(identity),
+        new RateLimiter(clock),
+        reflector,
+      );
+
+      await expect(
+        guard.canActivate(contextFor(requestWith(undefined))),
+      ).rejects.toBeInstanceOf(UnauthenticatedError);
+    });
   });
 });

@@ -7,6 +7,14 @@ import {
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { App } from 'supertest/types';
+import { InMemoryPasswordResetMailer } from '../../src/modules/auth/application/fakes';
+import {
+  PASSWORD_RESET_BACKGROUND_RUNNER,
+  PASSWORD_RESET_MAILER,
+  PASSWORD_RESET_RATE_LIMITER,
+} from '../../src/modules/auth/auth.tokens';
+import type { InProcessBackgroundRunner } from '../../src/modules/auth/infrastructure/in-process-background-runner';
+import { RateLimiter } from '../../src/platform/http/rate-limiter';
 import { CreateUsersProfiles1760000000000 } from '../../src/platform/database/migrations/1760000000000-CreateUsersProfiles';
 import {
   applyTrustProxy,
@@ -20,6 +28,9 @@ import {
 } from './support/firebase-emulator';
 
 const ME = '/api/v1/me';
+const PASSWORD_RESET = '/api/v1/auth/password-reset';
+const APP_BASE_URL = 'http://app.example.test';
+const RESEND_API_KEY = 're_e2e_fake_key_do_not_leak';
 const CONSENT = { terms_version: 'T1', privacy_version: 'P1' };
 
 describe('Application (e2e)', () => {
@@ -31,11 +42,21 @@ describe('Application (e2e)', () => {
   const server = () => app.getHttpServer();
   const newUser = () => emulator.signUp(`user${++userCount}@example.test`);
 
-  async function createApp(trustProxyHops: number) {
+  const mailer = new InMemoryPasswordResetMailer();
+
+  async function createApp(trustProxyHops: number, resetLimiter?: RateLimiter) {
     const { AppModule } = await import('../../src/app.module');
-    const moduleRef = await Test.createTestingModule({
+    let builder = Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(PASSWORD_RESET_MAILER)
+      .useValue(mailer);
+    if (resetLimiter) {
+      builder = builder
+        .overrideProvider(PASSWORD_RESET_RATE_LIMITER)
+        .useValue(resetLimiter);
+    }
+    const moduleRef = await builder.compile();
     const instance = moduleRef.createNestApplication<INestApplication<App>>();
     configureApp(instance);
     applyTrustProxy(instance, trustProxyHops);
@@ -53,6 +74,11 @@ describe('Application (e2e)', () => {
     process.env.FIREBASE_AUTH_EMULATOR_HOST = emulator.host;
     process.env.CONSENT_TERMS_VERSIONS = 'T1,T2';
     process.env.CONSENT_PRIVACY_VERSIONS = 'P1,P2';
+    process.env.APP_BASE_URL = APP_BASE_URL;
+    process.env.RESEND_API_KEY = RESEND_API_KEY;
+    process.env.PASSWORD_RESET_EMAIL_FROM = 'no-reply@mail.example.test';
+    // Generous here; the 429 test builds its own app with a small limiter.
+    process.env.PASSWORD_RESET_RATE_LIMIT = '1000';
 
     // Migrations are never auto-run by the app; apply them explicitly.
     const migrator = await new DataSource({
@@ -67,7 +93,10 @@ describe('Application (e2e)', () => {
     const { AppModule } = await import('../../src/app.module');
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(PASSWORD_RESET_MAILER)
+      .useValue(mailer)
+      .compile();
     app = moduleRef.createNestApplication();
     configureApp(app);
     await app.init();
@@ -361,6 +390,226 @@ describe('Application (e2e)', () => {
         '@example.test',
       ]) {
         expect(output).not.toContain(secret);
+      }
+    });
+  });
+
+  describe('password reset request', () => {
+    const reset = (body: unknown) =>
+      request(server())
+        .post(PASSWORD_RESET)
+        .send(body as object);
+    // The work runs after the 202; wait for it deterministically (no sleeps).
+    const flush = () =>
+      app
+        .get<InProcessBackgroundRunner>(PASSWORD_RESET_BACKGROUND_RUNNER, {
+          strict: false,
+        })
+        .idle();
+    const captureLogs = () => {
+      const lines: string[] = [];
+      const spies = (['log', 'warn', 'error', 'debug', 'verbose'] as const).map(
+        (level) =>
+          jest
+            .spyOn(Logger.prototype, level)
+            .mockImplementation((...args: unknown[]) => {
+              lines.push(args.map(String).join(' '));
+            }),
+      );
+      return {
+        lines,
+        restore: () => spies.forEach((spy) => spy.mockRestore()),
+      };
+    };
+
+    beforeEach(async () => {
+      await flush();
+      mailer.sent.length = 0;
+      mailer.failWith = undefined;
+    });
+
+    it('answers 202 identically for a known and an unknown address, without a token', async () => {
+      const email = `known${++userCount}@example.test`;
+      await emulator.signUp(email);
+
+      const known = await reset({ email })
+        .set('X-Flow-ID', 'reset-flow')
+        .expect(202)
+        .expect('Cache-Control', 'no-store')
+        .expect('X-Flow-ID', 'reset-flow');
+      const unknown = await reset({ email: 'nobody-at-all@example.test' })
+        .set('X-Flow-ID', 'reset-flow')
+        .expect(202)
+        .expect('Cache-Control', 'no-store')
+        .expect('X-Flow-ID', 'reset-flow');
+
+      await flush();
+      expect(known.text).toBe('');
+      expect(unknown.text).toBe(known.text);
+      const strip = (headers: Record<string, unknown>) => {
+        const { date: _date, etag: _etag, ...rest } = headers;
+        return rest;
+      };
+      expect(strip(unknown.headers)).toEqual(strip(known.headers));
+    });
+
+    it('mails exactly one message with the app link for a known address', async () => {
+      const email = `known${++userCount}@example.test`;
+      await emulator.signUp(email);
+
+      await reset({ email, language: 'ru' }).expect(202);
+      await flush();
+
+      expect(mailer.sent).toHaveLength(1);
+      expect(mailer.sent[0]).toMatchObject({ to: email, language: 'ru' });
+      expect(mailer.sent[0].link).toMatch(
+        new RegExp(
+          `^${APP_BASE_URL}/auth-action\\?mode=resetPassword&oobCode=[^&]+&lang=ru$`,
+        ),
+      );
+    });
+
+    it('defaults to English and ignores any Host header for the link', async () => {
+      const email = `known${++userCount}@example.test`;
+      await emulator.signUp(email);
+
+      await reset({ email })
+        .set('Host', 'evil.example')
+        .set('X-Forwarded-Host', 'evil2.example')
+        .expect(202);
+      await flush();
+
+      expect(mailer.sent[0].language).toBe('en');
+      expect(
+        mailer.sent[0].link.startsWith(`${APP_BASE_URL}/auth-action?`),
+      ).toBe(true);
+      expect(mailer.sent[0].link).toContain('lang=en');
+      expect(mailer.sent[0].link).not.toContain('evil.example');
+      expect(mailer.sent[0].link).not.toContain('evil2.example');
+    });
+
+    it('sends nothing for an unknown address', async () => {
+      await reset({ email: 'ghost@example.test' }).expect(202);
+      await flush();
+
+      expect(mailer.sent).toEqual([]);
+    });
+
+    it('answers 202 even if the mailer fails', async () => {
+      const email = `known${++userCount}@example.test`;
+      await emulator.signUp(email);
+      mailer.failWith = new Error('Resend is down');
+
+      const response = await reset({ email }).expect(202);
+      await flush();
+
+      expect(response.text).toBe('');
+    });
+
+    it.each([
+      [{}, 'email', 'REQUIRED'],
+      [{ email: 42 }, 'email', 'INVALID_TYPE'],
+      [{ email: 'not-an-email' }, 'email', 'INVALID_VALUE'],
+      [{ email: `${'a'.repeat(250)}@e.co` }, 'email', 'TOO_LONG'],
+      [
+        { email: 'a@example.test', language: 'de' },
+        'language',
+        'INVALID_VALUE',
+      ],
+    ])(
+      'rejects body %j with 400 invalid-request',
+      async (body, name, reason) => {
+        const response = await reset(body)
+          .expect(400)
+          .expect('Content-Type', /application\/problem\+json/);
+
+        expect(response.body.type).toBe('/problems/invalid-request');
+        expect(response.body.invalid_params).toEqual([{ name, reason }]);
+        expect(mailer.sent).toEqual([]);
+      },
+    );
+
+    it('never logs the address, link, oobCode or API key', async () => {
+      const email = `loggable${++userCount}@example.test`;
+      await emulator.signUp(email);
+      const logs = captureLogs();
+      mailer.failWith = new Error(`${email} ${RESEND_API_KEY}`);
+
+      try {
+        await reset({ email }).expect(202);
+        await flush();
+        mailer.failWith = undefined;
+        await reset({ email }).expect(202);
+        await reset({ email: 'unknown-logged@example.test' }).expect(202);
+        await reset({ email: 'invalid' }).expect(400);
+        await flush();
+      } finally {
+        logs.restore();
+      }
+
+      const output = logs.lines.join('\n');
+      expect(output).toContain('password_reset_failed');
+      expect(output).toContain('"route":"/api/v1/auth/password-reset"');
+      const oobCode = new URL(mailer.sent[0].link).searchParams.get('oobCode');
+      for (const secret of [
+        email,
+        'unknown-logged@example.test',
+        '@example.test',
+        mailer.sent[0].link,
+        oobCode ?? 'missing-oob-code',
+        RESEND_API_KEY,
+      ]) {
+        expect(output).not.toContain(secret);
+      }
+    });
+
+    it('silently stops mailing one address after 3 requests (never a 429)', async () => {
+      const email = `throttled${++userCount}@example.test`;
+      await emulator.signUp(email);
+      const logs = captureLogs();
+
+      try {
+        for (let i = 0; i < 5; i++) {
+          await reset({ email: i % 2 ? email.toUpperCase() : email }).expect(
+            202,
+          );
+          await flush();
+        }
+      } finally {
+        logs.restore();
+      }
+
+      expect(mailer.sent).toHaveLength(3);
+      const output = logs.lines.join('\n');
+      expect(output).toContain('"stage":"throttled"');
+      expect(output).not.toContain(email);
+    });
+
+    it('limits the route per client IP with 429 and Retry-After', async () => {
+      const limited = await createApp(
+        0,
+        new RateLimiter(
+          { now: () => new Date() },
+          { limit: 3, windowMs: 60_000 },
+        ),
+      );
+      try {
+        const call = () =>
+          request(limited.getHttpServer())
+            .post(PASSWORD_RESET)
+            .send({ email: 'ghost@example.test' });
+        for (let i = 0; i < 3; i++) await call().expect(202);
+
+        const response = await call()
+          .expect(429)
+          .expect('Content-Type', /application\/problem\+json/);
+
+        expect(response.body.type).toBe('/problems/rate-limited');
+        expect(Number(response.headers['retry-after'])).toBeGreaterThan(0);
+        // The other routes keep their own (global) budget.
+        await request(limited.getHttpServer()).get(ME).expect(401);
+      } finally {
+        await limited.close();
       }
     });
   });

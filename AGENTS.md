@@ -215,6 +215,29 @@ when touching the area.
 - `POST /api/v1/auth/password-reset` is an action-shaped path, not a resource noun. The
   path is fixed by the frontend's existing contract; this is a deliberate exception.
 
+## Public endpoints
+
+Every route requires a Firebase bearer token except those marked `@Public()`
+(`platform/auth/public.decorator.ts`). Today that is only
+`POST /api/v1/auth/password-reset`. Its request body is `{ "email", "language"? }`
+(`language` is `en` or `ru`, default `en`; an assumption, no spec defines it). It answers
+`202 Accepted` with an empty body for any well-formed request and does ALL work (Firebase
+link generation, Resend send) afterwards in an in-process background runner, so neither the
+body nor the latency depends on whether the account exists. Link-generation or Resend
+failures, a malformed link and a per-address throttle (3 per hour per SHA-256 of the
+lowercased address) are all silent; only the stage and error class are logged as
+`password_reset_failed`. Operational notes:
+
+- Nobody sees an outage unless someone alerts on `password_reset_failed` log events.
+- There is no Resend retry or idempotency key; work in flight is lost on a crash or restart
+  (the user requests again). The runner drops work beyond 100 concurrent tasks.
+- Public requests are charged to the global per-IP limit; the route has its own per-IP limit
+  (`PASSWORD_RESET_RATE_LIMIT`). Both limiters, and the per-address throttle, are in memory
+  and per instance, and fail closed at 10,000 keys (new keys are refused until a window
+  expires; for the per-address throttle that means new addresses get no email).
+- A wrong `TRUST_PROXY_HOPS` collapses all clients into one IP bucket (or lets them spoof it).
+- `@Public()` placed on a class opens every handler of that class; use it on handlers only.
+
 ## Known access-control decision
 
 - `GET /api/v1/users/:id` is currently unauthenticated and returns full user details

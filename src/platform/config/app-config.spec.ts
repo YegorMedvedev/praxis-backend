@@ -5,6 +5,9 @@ const base = {
   FIREBASE_PROJECT_ID: 'fake-project',
   CONSENT_TERMS_VERSIONS: 'T1',
   CONSENT_PRIVACY_VERSIONS: 'P1',
+  APP_BASE_URL: 'https://app.example.test',
+  RESEND_API_KEY: 're_fake_key',
+  PASSWORD_RESET_EMAIL_FROM: 'no-reply@mail.example.test',
 };
 
 describe('validateEnv', () => {
@@ -19,7 +22,112 @@ describe('validateEnv', () => {
       FIREBASE_AUTH_EMULATOR_HOST: undefined,
       CONSENT_TERMS_VERSIONS: ['T1'],
       CONSENT_PRIVACY_VERSIONS: ['P1'],
+      APP_BASE_URL: 'https://app.example.test',
+      RESEND_API_KEY: 're_fake_key',
+      PASSWORD_RESET_EMAIL_FROM: 'no-reply@mail.example.test',
+      PASSWORD_RESET_RATE_LIMIT: 5,
+      PASSWORD_RESET_RATE_WINDOW_MS: 60_000,
     });
+  });
+
+  describe('password reset', () => {
+    it('normalises APP_BASE_URL to its origin', () => {
+      expect(
+        validateEnv({ ...base, APP_BASE_URL: 'http://localhost:8081/' })
+          .APP_BASE_URL,
+      ).toBe('http://localhost:8081');
+    });
+
+    it.each([
+      undefined,
+      '',
+      'app.example.test',
+      'ftp://app.example.test',
+      'https://app.example.test/some/path',
+      'https://app.example.test/?x=1',
+      'https://user:pw-SECRET@app.example.test',
+    ])('rejects APP_BASE_URL %p without echoing it', (value) => {
+      let message = '';
+      try {
+        validateEnv({ ...base, APP_BASE_URL: value });
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toContain('APP_BASE_URL');
+      if (value) expect(message).not.toContain(value);
+    });
+
+    it('requires https for APP_BASE_URL in production', () => {
+      expect(() =>
+        validateEnv({
+          ...base,
+          NODE_ENV: 'production',
+          APP_BASE_URL: 'http://app.example.test',
+        }),
+      ).toThrow(/APP_BASE_URL.*https/);
+      expect(
+        validateEnv({ ...base, NODE_ENV: 'production' }).APP_BASE_URL,
+      ).toBe('https://app.example.test');
+    });
+
+    it.each([undefined, '', '   '])('requires RESEND_API_KEY (%p)', (value) => {
+      expect(() => validateEnv({ ...base, RESEND_API_KEY: value })).toThrow(
+        'RESEND_API_KEY is required',
+      );
+    });
+
+    it('never echoes the sender or key values', () => {
+      let message = '';
+      try {
+        validateEnv({ ...base, PASSWORD_RESET_EMAIL_FROM: 'not-an-email-XYZ' });
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).toContain('PASSWORD_RESET_EMAIL_FROM');
+      expect(message).not.toContain('not-an-email-XYZ');
+    });
+
+    it.each([
+      undefined,
+      '',
+      'nobody',
+      'a@b',
+      'a b@c.d',
+      'Name <a@b.co>',
+      'a"b@c.de',
+      'a,b@c.de',
+      'a<b>@c.de',
+      'a b@c.de',
+      'a\tb@c.de',
+      'a@c.\nde',
+      '"a"@c.de',
+    ])('requires a plain PASSWORD_RESET_EMAIL_FROM address (%p)', (value) => {
+      expect(() =>
+        validateEnv({ ...base, PASSWORD_RESET_EMAIL_FROM: value }),
+      ).toThrow('PASSWORD_RESET_EMAIL_FROM must be');
+    });
+
+    it('accepts rate limit overrides', () => {
+      const config = validateEnv({
+        ...base,
+        PASSWORD_RESET_RATE_LIMIT: '2',
+        PASSWORD_RESET_RATE_WINDOW_MS: '1000',
+      });
+      expect(config.PASSWORD_RESET_RATE_LIMIT).toBe(2);
+      expect(config.PASSWORD_RESET_RATE_WINDOW_MS).toBe(1000);
+    });
+
+    it.each(['0', '-1', '1.5', 'abc', ''])(
+      'rejects rate limit setting %p',
+      (value) => {
+        expect(() =>
+          validateEnv({ ...base, PASSWORD_RESET_RATE_LIMIT: value }),
+        ).toThrow('PASSWORD_RESET_RATE_LIMIT must be a positive integer');
+        expect(() =>
+          validateEnv({ ...base, PASSWORD_RESET_RATE_WINDOW_MS: value }),
+        ).toThrow('PASSWORD_RESET_RATE_WINDOW_MS must be a positive integer');
+      },
+    );
   });
 
   describe('consent versions', () => {

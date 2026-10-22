@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
 import {
   RateLimitedError,
@@ -13,6 +14,7 @@ import {
 import type { RateLimiter } from '../http/rate-limiter';
 import { RATE_LIMITER, TOKEN_VERIFIER } from './auth.tokens';
 import type { AuthenticatedIdentity } from './identity';
+import { IS_PUBLIC } from './public.decorator';
 import type { TokenVerifier } from './token-verifier';
 
 export interface AuthenticatedRequest extends Request {
@@ -27,8 +29,10 @@ function bearerToken(request: Request): string | undefined {
 }
 
 /**
- * Global guard: every endpoint is authenticated (none is public). It also
- * applies the single rate limit, which needs the resolved identity: keyed by
+ * Global guard: every endpoint is authenticated unless it is explicitly marked
+ * `@Public()` (currently only the password-reset request, which AGENTS.md
+ * defines as unauthenticated; public requests are charged to the client IP).
+ * It also applies the single rate limit, which needs the resolved identity: keyed by
  * uid when authentication succeeds, by client IP when it fails.
  */
 @Injectable()
@@ -36,10 +40,20 @@ export class AuthGuard implements CanActivate {
   constructor(
     @Inject(TOKEN_VERIFIER) private readonly verifier: TokenVerifier,
     @Inject(RATE_LIMITER) private readonly limiter: RateLimiter,
+    private readonly reflector: Reflector,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+
+    const isPublic = this.reflector.getAllAndOverride<boolean | undefined>(
+      IS_PUBLIC,
+      [context.getHandler(), context.getClass()],
+    );
+    if (isPublic) {
+      this.enforce(`ip:${request.ip ?? 'unknown'}`);
+      return true;
+    }
 
     let identity: AuthenticatedIdentity;
     try {

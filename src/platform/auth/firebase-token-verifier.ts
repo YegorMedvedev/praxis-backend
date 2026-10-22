@@ -1,5 +1,3 @@
-import { cert, getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 import type { AppConfig } from '../config/app-config';
 import {
   AccountDisabledError,
@@ -8,6 +6,7 @@ import {
   TokenExpiredError,
   UnauthenticatedError,
 } from '../../shared/domain-error';
+import { getFirebaseAuth } from './firebase-app';
 import type { AuthenticatedIdentity } from './identity';
 import type { TokenVerifier } from './token-verifier';
 
@@ -70,31 +69,8 @@ export class FirebaseTokenVerifier implements TokenVerifier {
   }
 }
 
-const APP_NAME = 'praxis-auth';
-
-/** Parses the service-account JSON; never lets the SDK/JSON error text escape. */
-function credentialFrom(json: string) {
-  try {
-    return cert(JSON.parse(json) as object);
-  } catch {
-    // The underlying message can quote fragments of the secret.
-    throw new Error('FIREBASE_CREDENTIALS_JSON is not a valid service account');
-  }
-}
-
 export function createFirebaseTokenVerifier(
   config: Pick<AppConfig, 'FIREBASE_PROJECT_ID' | 'FIREBASE_CREDENTIALS_JSON'>,
 ): TokenVerifier {
-  const app =
-    getApps().find((candidate) => candidate.name === APP_NAME) ??
-    initializeApp(
-      {
-        projectId: config.FIREBASE_PROJECT_ID,
-        ...(config.FIREBASE_CREDENTIALS_JSON
-          ? { credential: credentialFrom(config.FIREBASE_CREDENTIALS_JSON) }
-          : {}),
-      },
-      APP_NAME,
-    );
-  return new FirebaseTokenVerifier(getAuth(app));
+  return new FirebaseTokenVerifier(getFirebaseAuth(config));
 }

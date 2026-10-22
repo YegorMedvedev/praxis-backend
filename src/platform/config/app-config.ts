@@ -15,6 +15,15 @@ export interface AppConfig {
   CONSENT_TERMS_VERSIONS: string[];
   /** Recognised Privacy Policy version identifiers (comma-separated in env). */
   CONSENT_PRIVACY_VERSIONS: string[];
+  /** Trusted app origin the emailed reset link points at (no trailing slash). */
+  APP_BASE_URL: string;
+  /** Resend API credential (a secret). */
+  RESEND_API_KEY: string;
+  /** Resend-verified sender address for reset emails. */
+  PASSWORD_RESET_EMAIL_FROM: string;
+  /** Requests per client IP per window on POST /auth/password-reset. */
+  PASSWORD_RESET_RATE_LIMIT: number;
+  PASSWORD_RESET_RATE_WINDOW_MS: number;
 }
 
 const NODE_ENVS: readonly string[] = ['development', 'test', 'production'];
@@ -28,6 +37,40 @@ function isJsonObject(text: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Plain dot-atom address: no quotes, commas, angle brackets, whitespace or control characters. */
+const EMAIL_ADDRESS =
+  /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+
+/** Returns the origin of an absolute http(s) URL with no path/query, else undefined. */
+function parseOrigin(value: unknown): URL | undefined {
+  if (typeof value !== 'string') return undefined;
+  try {
+    const url = new URL(value.trim());
+    const bare =
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      url.username === '' &&
+      url.password === '' &&
+      url.pathname === '/' &&
+      url.search === '' &&
+      url.hash === '';
+    return bare ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Optional positive integer with a default; undefined when unusable. */
+function parsePositiveInt(
+  value: unknown,
+  fallback: number,
+): number | undefined {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return undefined;
+  if (typeof value === 'string' && value.trim() === '') return undefined;
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : undefined;
 }
 
 /** Parses a required comma-separated list; returns undefined when unusable. */
@@ -118,6 +161,39 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     );
   }
 
+  const appBase = parseOrigin(raw.APP_BASE_URL);
+  if (!appBase) {
+    problems.push(
+      'APP_BASE_URL is required and must be an absolute http(s) origin without path',
+    );
+  } else if (nodeEnv === 'production' && appBase.protocol !== 'https:') {
+    problems.push('APP_BASE_URL must use https when NODE_ENV is production');
+  }
+
+  const resendKey = raw.RESEND_API_KEY;
+  if (typeof resendKey !== 'string' || resendKey.trim().length === 0) {
+    problems.push('RESEND_API_KEY is required');
+  }
+
+  const resetFrom = raw.PASSWORD_RESET_EMAIL_FROM;
+  if (typeof resetFrom !== 'string' || !EMAIL_ADDRESS.test(resetFrom.trim())) {
+    problems.push(
+      'PASSWORD_RESET_EMAIL_FROM must be a plain email address (name@domain)',
+    );
+  }
+
+  const resetLimit = parsePositiveInt(raw.PASSWORD_RESET_RATE_LIMIT, 5);
+  if (resetLimit === undefined) {
+    problems.push('PASSWORD_RESET_RATE_LIMIT must be a positive integer');
+  }
+  const resetWindow = parsePositiveInt(
+    raw.PASSWORD_RESET_RATE_WINDOW_MS,
+    60_000,
+  );
+  if (resetWindow === undefined) {
+    problems.push('PASSWORD_RESET_RATE_WINDOW_MS must be a positive integer');
+  }
+
   if (problems.length > 0) {
     throw new Error(`Invalid environment: ${problems.join('; ')}`);
   }
@@ -132,5 +208,10 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     FIREBASE_AUTH_EMULATOR_HOST: emulatorHost,
     CONSENT_TERMS_VERSIONS: termsVersions as string[],
     CONSENT_PRIVACY_VERSIONS: privacyVersions as string[],
+    APP_BASE_URL: (appBase as URL).origin,
+    RESEND_API_KEY: (resendKey as string).trim(),
+    PASSWORD_RESET_EMAIL_FROM: (resetFrom as string).trim(),
+    PASSWORD_RESET_RATE_LIMIT: resetLimit as number,
+    PASSWORD_RESET_RATE_WINDOW_MS: resetWindow as number,
   };
 }
