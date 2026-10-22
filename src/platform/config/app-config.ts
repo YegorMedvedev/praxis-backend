@@ -4,9 +4,25 @@ export interface AppConfig {
   NODE_ENV: NodeEnv;
   PORT: number;
   DATABASE_URL: string;
+  FIREBASE_PROJECT_ID: string;
+  /** Raw service-account JSON (a secret); absent means Application Default Credentials. */
+  FIREBASE_CREDENTIALS_JSON?: string;
+  /** host:port of the Firebase Auth emulator; never allowed in production. */
+  FIREBASE_AUTH_EMULATOR_HOST?: string;
 }
 
 const NODE_ENVS: readonly string[] = ['development', 'test', 'production'];
+
+const HOST_PORT = /^[A-Za-z0-9.-]+:\d{1,5}$/;
+
+function isJsonObject(text: string): boolean {
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Validates raw environment variables. Error messages name the variable only,
@@ -30,6 +46,38 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     problems.push('DATABASE_URL is required');
   }
 
+  const projectId = raw.FIREBASE_PROJECT_ID;
+  if (typeof projectId !== 'string' || projectId.trim().length === 0) {
+    problems.push('FIREBASE_PROJECT_ID is required');
+  }
+
+  let credentials: string | undefined;
+  const rawCredentials = raw.FIREBASE_CREDENTIALS_JSON;
+  if (typeof rawCredentials === 'string' && rawCredentials.length > 0) {
+    credentials = rawCredentials;
+    if (!isJsonObject(rawCredentials)) {
+      problems.push('FIREBASE_CREDENTIALS_JSON must be a JSON object');
+    }
+  } else if (
+    rawCredentials !== undefined &&
+    typeof rawCredentials !== 'string'
+  ) {
+    problems.push('FIREBASE_CREDENTIALS_JSON must be a JSON object');
+  }
+
+  let emulatorHost: string | undefined;
+  const rawEmulator = raw.FIREBASE_AUTH_EMULATOR_HOST;
+  if (typeof rawEmulator === 'string' && rawEmulator.length > 0) {
+    emulatorHost = rawEmulator;
+    if (!HOST_PORT.test(rawEmulator)) {
+      problems.push('FIREBASE_AUTH_EMULATOR_HOST must be host:port');
+    } else if (nodeEnv === 'production') {
+      problems.push(
+        'FIREBASE_AUTH_EMULATOR_HOST must not be set when NODE_ENV is production',
+      );
+    }
+  }
+
   if (problems.length > 0) {
     throw new Error(`Invalid environment: ${problems.join('; ')}`);
   }
@@ -38,5 +86,8 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     NODE_ENV: nodeEnv as NodeEnv,
     PORT: port,
     DATABASE_URL: databaseUrl as string,
+    FIREBASE_PROJECT_ID: projectId as string,
+    FIREBASE_CREDENTIALS_JSON: credentials,
+    FIREBASE_AUTH_EMULATOR_HOST: emulatorHost,
   };
 }

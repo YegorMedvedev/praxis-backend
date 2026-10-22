@@ -15,6 +15,7 @@ describe('Application (e2e)', () => {
   beforeAll(async () => {
     container = await new PostgreSqlContainer('postgres:17-alpine').start();
     process.env.DATABASE_URL = container.getConnectionUri();
+    process.env.FIREBASE_PROJECT_ID = 'praxis-e2e-fake';
 
     // Imported after DATABASE_URL is set: config is read when the module loads.
     const { AppModule } = await import('../../src/app.module');
