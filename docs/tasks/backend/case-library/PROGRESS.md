@@ -5,8 +5,8 @@ Order: 03 first (domain, completion port, progress), then 01 (list), then 02 (de
 | Task | Status | Commit | Notes |
 |---|---|---|---|
 | 03 completion-and-progress (module scaffold, domain, completion use case + public API, `GET /me/case-progress`, migration, seed) | done | 9a56308 | lint/test/arch/integration/e2e green (orchestrator-run, Node 24, Ryuk off). 1 review, 0 blocking. Unmet: spec AC-16 (per-user 429; only global per-IP limiter applies; see HUMAN-REQUIRED). Non-blocking follow-ups: length/NUL guard in RecordCaseCompletion; assert no-store on 401/405 in e2e. |
-| 01 case-catalog-api (`GET /cases`) | done | SHA | Implemented with 02 in one commit. test:all green (orchestrator-run). Unmet: per-user 429 (global per-IP limiter only; HUMAN-REQUIRED); p95 latency not measured. |
-| 02 case-detail-api (`GET /cases/{case_id}`, `case-not-found`) | done | SHA | See 01. Undecodable percent-escape ids (`/cases/%E0%A4%A`) are mapped to 404 `case-not-found` by a path-scoped rule in the problem filter; such a path is 404 even without a token (router fails before auth). |
+| 01 case-catalog-api (`GET /cases`) | done | 9da263c | Implemented with 02 in one commit. test:all green (orchestrator-run). Unmet: per-user 429 (global per-IP limiter only; HUMAN-REQUIRED); p95 latency not measured. |
+| 02 case-detail-api (`GET /cases/{case_id}`, `case-not-found`) | done | 9da263c | See 01. Undecodable percent-escape ids (`/cases/%E0%A4%A`) are mapped to 404 `case-not-found` by a path-scoped rule in the problem filter; such a path is 404 even without a token (router fails before auth). |
 
 ## Spec conflicts and assumptions (running list)
 
