@@ -16,6 +16,7 @@ import {
 import type { InProcessBackgroundRunner } from '../../src/modules/auth/infrastructure/in-process-background-runner';
 import { RateLimiter } from '../../src/platform/http/rate-limiter';
 import { CreateUsersProfiles1760000000000 } from '../../src/platform/database/migrations/1760000000000-CreateUsersProfiles';
+import { CreateCaseLibrary1760000001000 } from '../../src/platform/database/migrations/1760000001000-CreateCaseLibrary';
 import {
   applyTrustProxy,
   configureApp,
@@ -89,7 +90,10 @@ describe('Application (e2e)', () => {
     const migrator = await new DataSource({
       type: 'postgres',
       url: postgres.getConnectionUri(),
-      migrations: [CreateUsersProfiles1760000000000],
+      migrations: [
+        CreateUsersProfiles1760000000000,
+        CreateCaseLibrary1760000001000,
+      ],
     }).initialize();
     await migrator.runMigrations();
     await migrator.destroy();

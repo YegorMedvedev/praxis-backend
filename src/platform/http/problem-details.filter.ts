@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
   ArgumentsHost,
+  BadRequestException,
   Catch,
   ExceptionFilter,
   HttpException,
@@ -9,6 +10,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import {
+  CaseNotFoundError,
   DomainError,
   InvalidRequestError,
   RateLimitedError,
@@ -45,6 +47,24 @@ const INVALID_REQUEST_DETAIL: Record<number, string> = {
 };
 
 const UNMAPPED_4XX_DETAIL = 'The request could not be processed.';
+
+/**
+ * Resources whose path id is opaque: an id that is not valid percent-encoding
+ * is just an id that does not exist (404), never a 400. Express rejects such a
+ * path before any handler runs, so the mapping has to live here.
+ */
+// The router fails before guards and the method check, so such a path is a
+// 404 even when unauthenticated.
+const OPAQUE_ID_PATH = /^\/api\/v\d+\/cases\/[^/]+\/?$/i;
+
+function isUndecodablePath(exception: unknown): boolean {
+  // Nest turns the router's URIError into a BadRequestException that keeps
+  // the router's message.
+  return (
+    exception instanceof BadRequestException &&
+    exception.message.startsWith('Failed to decode param')
+  );
+}
 
 interface ResolvedProblem {
   problem: Omit<ProblemDetails, 'flow_id'>;
@@ -97,6 +117,10 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
   private resolve(exception: unknown, request: Request): ResolvedProblem {
     const instance = request.originalUrl.split('?')[0];
+
+    if (isUndecodablePath(exception) && OPAQUE_ID_PATH.test(instance)) {
+      exception = new CaseNotFoundError('case not found');
+    }
 
     if (exception instanceof DomainError) {
       const headers: Record<string, string> = {};

@@ -8,6 +8,7 @@ export const ERROR_CODES = [
   'token-expired',
   'account-disabled',
   'profile-not-found',
+  'case-not-found',
   'invalid-request',
   'rate-limited',
   'service-unavailable',
@@ -62,6 +63,10 @@ export class AccountDisabledError extends DomainError {
 
 export class ProfileNotFoundError extends DomainError {
   readonly code = 'profile-not-found';
+}
+
+export class CaseNotFoundError extends DomainError {
+  readonly code = 'case-not-found';
 }
 
 export class ServiceUnavailableError extends DomainError {

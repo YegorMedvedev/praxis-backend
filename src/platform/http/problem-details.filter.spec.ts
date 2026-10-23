@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import {
   AccountDisabledError,
+  CaseNotFoundError,
   ConflictError,
   IncompleteIdentityError,
   InvalidRequestError,
@@ -92,6 +93,7 @@ describe('ProblemDetailsFilter', () => {
     [new IncompleteIdentityError('no email'), 403, 'incomplete-identity'],
     [new AccountDisabledError('disabled'), 403, 'account-disabled'],
     [new ProfileNotFoundError('none'), 404, 'profile-not-found'],
+    [new CaseNotFoundError('none'), 404, 'case-not-found'],
     [new InvalidRequestError('bad'), 400, 'invalid-request'],
     [new ServiceUnavailableError('down'), 503, 'service-unavailable'],
     [new NotFoundException(), 404, 'not-found'],
@@ -153,6 +155,16 @@ describe('ProblemDetailsFilter', () => {
   });
 
   describe('framework statuses', () => {
+    it('maps an undecodable case id to case-not-found, other paths stay 400', () => {
+      const error = new BadRequestException(
+        "Failed to decode param '%E0%A4%A'",
+      );
+      const caseId = run(error, { url: '/api/v1/cases/%E0%A4%A' });
+      expect(caseId.status).toBe(404);
+      expect(caseId.body.type).toBe('/problems/case-not-found');
+      expect(run(error, { url: '/api/v1/users/%E0%A4%A' }).status).toBe(400);
+    });
+
     it('turns a 404 into 405 with Allow when the path has other methods', () => {
       const { status, body, headers } = run(new NotFoundException(), {
         method: 'POST',

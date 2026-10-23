@@ -43,6 +43,7 @@ export const PROBLEMS: Record<ProblemName, ProblemDefinition> = {
   'incomplete-identity': { status: 403, title: 'Incomplete Identity' },
   'account-disabled': { status: 403, title: 'Account Disabled' },
   'profile-not-found': { status: 404, title: 'Profile Not Found' },
+  'case-not-found': { status: 404, title: 'Case Not Found' },
   'invalid-request': { status: 400, title: 'Invalid Request' },
   'rate-limited': { status: 429, title: 'Too Many Requests' },
   'internal-error': {
