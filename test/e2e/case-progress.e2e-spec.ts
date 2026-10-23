@@ -110,6 +110,7 @@ describe('GET /me/case-progress (e2e)', () => {
       .get(PROGRESS)
       .expect(401)
       .expect('WWW-Authenticate', 'Bearer')
+      .expect('Cache-Control', 'no-store')
       .expect('Content-Type', /application\/problem\+json/);
     expect(response.body.type).toBe('/problems/unauthenticated');
   });
@@ -205,6 +206,7 @@ describe('GET /me/case-progress (e2e)', () => {
         .set('Authorization', `Bearer ${idToken}`)
         .expect(405)
         .expect('Allow', 'GET')
+        .expect('Cache-Control', 'no-store')
         .expect('Content-Type', /application\/problem\+json/);
       expect(response.body.type).toBe('/problems/invalid-request');
     },

@@ -49,15 +49,28 @@ describe('RecordCaseCompletion', () => {
     ).resolves.toEqual({ recorded: true });
   });
 
+  it('accepts ids of exactly 128 characters', async () => {
+    await expect(
+      record.execute({ userId: 'u'.repeat(128), caseId: 'c'.repeat(128) }),
+    ).resolves.toEqual({ recorded: true });
+  });
+
   it.each([
     ['', 'c1'],
     ['u1', ''],
     ['  ', 'c1'],
-  ])('rejects blank ids (%p, %p)', async (userId, caseId) => {
-    await expect(record.execute({ userId, caseId })).rejects.toBeInstanceOf(
-      ValidationFailedError,
-    );
-  });
+    ['u1', 'x'.repeat(129)],
+    ['u'.repeat(129), 'c1'],
+    ['u1', 'c\u00001'],
+    ['u\u00001', 'c1'],
+  ])(
+    'rejects blank, over-long or NUL-containing ids (%p, %p)',
+    async (userId, caseId) => {
+      await expect(record.execute({ userId, caseId })).rejects.toBeInstanceOf(
+        ValidationFailedError,
+      );
+    },
+  );
 });
 
 describe('CompletionIndex', () => {

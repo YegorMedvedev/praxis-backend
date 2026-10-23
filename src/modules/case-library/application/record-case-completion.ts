@@ -2,6 +2,8 @@ import { ValidationFailedError } from '../../../shared/domain-error';
 import type { Clock } from '../../../shared/clock';
 import type { CaseCompletionRepository } from '../domain/case-completion';
 
+const MAX_ID_LENGTH = 128;
+
 export interface RecordCaseCompletionCommand {
   /** Firebase uid of the learner whose session ended. */
   userId: string;
@@ -29,8 +31,14 @@ export class RecordCaseCompletion implements CaseCompletionRecorder {
   async execute(
     command: RecordCaseCompletionCommand,
   ): Promise<{ recorded: boolean }> {
-    if (!command.userId.trim() || !command.caseId.trim()) {
-      throw new ValidationFailedError('userId and caseId are required');
+    for (const id of [command.userId, command.caseId]) {
+      if (!id.trim()) {
+        throw new ValidationFailedError('userId and caseId are required');
+      }
+      // The columns hold at most 128 characters and PostgreSQL text rejects NUL.
+      if (id.length > MAX_ID_LENGTH || id.includes('\u0000')) {
+        throw new ValidationFailedError('userId and caseId are not valid ids');
+      }
     }
     const recorded = await this.completions.recordIfAbsent({
       userId: command.userId,
