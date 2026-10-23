@@ -8,6 +8,7 @@ import { EndSession } from './application/end-session';
 import { GenerationRegistry } from './application/generation-registry';
 import { GetSession } from './application/get-session';
 import { ListMessages } from './application/list-messages';
+import { PurgeExpiredSessions } from './application/purge-expired-sessions';
 import { ProcessSessionDeletions } from './application/process-session-deletions';
 import { SendTherapistMessage } from './application/send-therapist-message';
 import {
@@ -38,6 +39,7 @@ import type { SessionGenerationCanceller } from './domain/session-generation-can
 import type { SessionRepository } from './domain/session-repository';
 import type { UnitOfWork } from './domain/unit-of-work';
 import { ChatSimulationInfrastructureModule } from './infrastructure/chat-simulation-infrastructure.module';
+import { RetentionWorker } from './infrastructure/retention-worker';
 import { SessionDeletionWorker } from './infrastructure/session-deletion-worker';
 import { noStoreMiddleware } from './presentation/no-store.middleware';
 import { MessagesController } from './presentation/messages.controller';
@@ -89,8 +91,9 @@ import { SessionsController } from './presentation/sessions.controller';
     },
     {
       provide: GetSession,
-      inject: [SESSION_REPOSITORY],
-      useFactory: (sessions: SessionRepository) => new GetSession(sessions),
+      inject: [SESSION_REPOSITORY, CLOCK],
+      useFactory: (sessions: SessionRepository, clock: Clock) =>
+        new GetSession(sessions, clock),
     },
     {
       provide: EndSession,
@@ -155,9 +158,12 @@ import { SessionsController } from './presentation/sessions.controller';
     },
     {
       provide: ListMessages,
-      inject: [SESSION_REPOSITORY, MESSAGE_REPOSITORY],
-      useFactory: (sessions: SessionRepository, messages: MessageRepository) =>
-        new ListMessages(sessions, messages),
+      inject: [SESSION_REPOSITORY, MESSAGE_REPOSITORY, CLOCK],
+      useFactory: (
+        sessions: SessionRepository,
+        messages: MessageRepository,
+        clock: Clock,
+      ) => new ListMessages(sessions, messages, clock),
     },
     // Spec 02 FR-7 (15 s). A provider so tests can shorten the waits.
     { provide: REPLY_TIMINGS, useValue: DEFAULT_REPLY_TIMINGS },
@@ -197,7 +203,32 @@ import { SessionsController } from './presentation/sessions.controller';
           timings,
         ),
     },
+    {
+      provide: PurgeExpiredSessions,
+      inject: [
+        SESSION_REPOSITORY,
+        REMOTE_SESSION_DELETION_QUEUE,
+        UNIT_OF_WORK,
+        SESSION_GENERATION_CANCELLER,
+        CLOCK,
+      ],
+      useFactory: (
+        sessions: SessionRepository,
+        deletions: RemoteSessionDeletionQueue,
+        unitOfWork: UnitOfWork,
+        canceller: SessionGenerationCanceller,
+        clock: Clock,
+      ) =>
+        new PurgeExpiredSessions(
+          sessions,
+          deletions,
+          unitOfWork,
+          canceller,
+          clock,
+        ),
+    },
     SessionDeletionWorker,
+    RetentionWorker,
   ],
 })
 export class ChatSimulationModule implements NestModule {

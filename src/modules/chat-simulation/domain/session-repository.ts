@@ -33,4 +33,11 @@ export interface SessionRepository {
     userId: string,
     caseId: string,
   ): Promise<RemovedSession[]>;
+  /**
+   * Retention: removes up to `limit` sessions created at or before `cutoff`
+   * (oldest first, any status) together with their messages, and returns
+   * them. Rows locked by another transaction are skipped, so two passes never
+   * block each other and a later pass picks them up.
+   */
+  deleteExpired(cutoff: Date, limit: number): Promise<RemovedSession[]>;
 }

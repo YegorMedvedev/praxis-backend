@@ -36,7 +36,9 @@ export class SendTherapistMessage {
     const text = normalizeTherapistText(rawText);
     return this.unitOfWork.run(async () => {
       const session = await this.sessions.lockOwned(sessionId, userId);
-      if (!session) throw new SessionNotFoundError('session not found');
+      if (!session || session.isExpired(this.clock.now())) {
+        throw new SessionNotFoundError('session not found');
+      }
       if (!session.isInProgress()) {
         throw new SessionEndedError('session already ended');
       }

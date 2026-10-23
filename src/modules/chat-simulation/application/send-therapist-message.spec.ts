@@ -43,7 +43,7 @@ describe('therapist messages', () => {
       { next: () => `m${++nextId}` },
       { now: () => now },
     );
-    list = new ListMessages(sessions, messages);
+    list = new ListMessages(sessions, messages, { now: () => now });
     await sessions.insert(
       Session.start({
         id: 's1',
@@ -146,5 +146,16 @@ describe('therapist messages', () => {
       ['opening', 'PATIENT'],
       ['m1', 'THERAPIST'],
     ]);
+  });
+
+  it('treats a session older than the retention period as not found, even before the job ran (05 FR-6)', async () => {
+    now = new Date('2026-04-02T10:00:00.000Z'); // 91 days after creation
+
+    await expect(send.execute('u1', 's1', 'Hi')).rejects.toBeInstanceOf(
+      SessionNotFoundError,
+    );
+    await expect(list.execute('u1', 's1')).rejects.toBeInstanceOf(
+      SessionNotFoundError,
+    );
   });
 });

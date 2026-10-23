@@ -116,9 +116,24 @@ export class TypeOrmSessionRepository implements SessionRepository {
     return this.deleteWhere('user_id = $1 AND case_id = $2', [userId, caseId]);
   }
 
+  async deleteExpired(cutoff: Date, limit: number): Promise<RemovedSession[]> {
+    // SKIP LOCKED: a session being written right now is left for the next
+    // pass instead of blocking this one. Messages cascade with the row.
+    return this.deleteWhere(
+      `id IN (
+         SELECT id FROM chat_simulation.sessions
+         WHERE created_at <= $1
+         ORDER BY created_at
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )`,
+      [cutoff, limit],
+    );
+  }
+
   private async deleteWhere(
     where: string,
-    params: string[],
+    params: unknown[],
   ): Promise<RemovedSession[]> {
     // The transcript goes with the row (messages cascade).
     const result: unknown = await this.repo.manager.query(

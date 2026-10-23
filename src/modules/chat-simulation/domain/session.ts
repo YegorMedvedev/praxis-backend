@@ -1,5 +1,6 @@
 import { SessionEndedError } from '../../../shared/domain-error';
 import type { Language } from './language';
+import { isExpired } from './retention';
 
 export const SESSION_STATUSES = [
   'IN_PROGRESS',
@@ -94,6 +95,15 @@ export class Session {
   }
   get remoteInSync(): boolean {
     return this.props.remoteInSync;
+  }
+
+  /**
+   * True once the 90-day retention period has passed. An expired session is
+   * treated as gone (`session-not-found`) even before the retention job has
+   * physically removed it (05 FR-6).
+   */
+  isExpired(now: Date): boolean {
+    return isExpired(this.props.createdAt, now);
   }
 
   isInProgress(): boolean {

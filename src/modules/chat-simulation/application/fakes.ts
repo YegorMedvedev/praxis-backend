@@ -102,6 +102,17 @@ export class InMemorySessionRepository
     return Promise.resolve({ id, openaiSessionId: session.openaiSessionId });
   }
 
+  deleteExpired(cutoff: Date, limit: number): Promise<RemovedSession[]> {
+    const expired = [...this.sessions.values()]
+      .filter((s) => s.createdAt.getTime() <= cutoff.getTime())
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      .slice(0, limit);
+    for (const session of expired) this.sessions.delete(session.id);
+    return Promise.resolve(
+      expired.map((s) => ({ id: s.id, openaiSessionId: s.openaiSessionId })),
+    );
+  }
+
   deleteAllForUserCase(
     userId: string,
     caseId: string,

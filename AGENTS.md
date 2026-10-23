@@ -307,6 +307,35 @@ when touching the area.
   `SMOKE_AGENT_ID_RU`; each language is skipped without its id. It makes billable calls,
   deletes the remote sessions it creates and prints no reply text.
 
+## Chat simulation: retention and privacy
+
+- **90-day retention.** Every session is deleted with its messages once `created_at + 90 days`
+  has passed, in any status (the clock starts at creation). Case completion is untouched.
+  `PurgeExpiredSessions` (application) deletes in batches of 200 (at most 500 per pass) with
+  `FOR UPDATE SKIP LOCKED` and enqueues each `openai_session_id` in `agent_session_deletions` in
+  the SAME transaction as the delete; a failing batch rolls back whole. Idempotent and safe to
+  run twice. `RetentionWorker` (in-process, single instance, not started when `NODE_ENV=test`,
+  never overlaps passes) runs 10 s after boot and then every 6 hours; it logs counts only
+  (`retention_purge`, `retention_purge_failed` with the error class).
+- **NFR-1 (nothing older than 90 d + 24 h).** A session is removed by the first pass after its
+  90th day, so the worst case is one interval plus the pass duration (about 6 h), well inside 24 h.
+  The startup pass means restarts do not postpone enforcement. Defence in depth: `GET`, `PATCH`,
+  `GET/POST .../messages` and `.../patient-replies` already answer `session-not-found` for a
+  session older than 90 days (`Session.isExpired`), even before the job has deleted it.
+- **Runbook and audit:** `docs/runbooks/chat-simulation-erasure.md` (manual erasure of one user,
+  retention audit, backups, transcript access). The SQL lives next to it and is run by
+  integration tests. Nobody sees a stopped or failing job unless the audit query or an alert on
+  `retention_purge_failed` / `remote_session_deletions_failed` / `reply_generation_failed` exists.
+- No tooling exposes transcript text (FR-11) and the API has no transcript export; only
+  `GET /api/v1/sessions/{session_id}/messages` returns message text, to its owner (e2e-tested).
+  The learner's own messages follow the same rules as the patient's, and a distress message is
+  handled like any other (no detection, no flag; tested).
+- Logs never contain message text, prompts, provider messages or remote ids (e2e marker scan over
+  create, message, stream, failure, end, discard, retention and cleanup, in both languages).
+- Operational limits: both workers are per instance (run them on one instance only); backups
+  must expire within 30 days (a deployment decision, see HUMAN-REQUIRED); a remote session
+  whose id was never stored cannot be found and is only removed by OpenAI's own expiry.
+
 ## Public endpoints
 
 Every route requires a Firebase bearer token except those marked `@Public()`

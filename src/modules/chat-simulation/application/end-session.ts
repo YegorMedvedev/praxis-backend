@@ -23,7 +23,9 @@ export class EndSession {
   async execute(userId: string, sessionId: string): Promise<SessionView> {
     const { view, transitioned } = await this.unitOfWork.run(async () => {
       const session = await this.sessions.lockOwned(sessionId, userId);
-      if (!session) throw new SessionNotFoundError('session not found');
+      if (!session || session.isExpired(this.clock.now())) {
+        throw new SessionNotFoundError('session not found');
+      }
 
       const transitioned = session.endByTherapist(this.clock.now());
       if (transitioned) {

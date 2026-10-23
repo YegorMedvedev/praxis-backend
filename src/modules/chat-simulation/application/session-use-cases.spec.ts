@@ -51,7 +51,7 @@ describe('session lifecycle use cases', () => {
       { next: () => `s${++nextId}` },
       clock,
     );
-    get = new GetSession(sessions);
+    get = new GetSession(sessions, clock);
     end = new EndSession(sessions, completions, uow, canceller, clock);
     discard = new DiscardSession(sessions, queue, uow, canceller, clock);
   });
@@ -253,6 +253,33 @@ describe('session lifecycle use cases', () => {
       await discard.execute('u1', 's1');
 
       expect([...queue.entries.keys()]).toEqual(['remote-9']);
+    });
+  });
+
+  describe('retention expiry (05 FR-6, AC-6)', () => {
+    it('answers not found once 90 days have passed since creation, for GET and PATCH', async () => {
+      await start();
+      now = new Date('2026-03-31T09:59:59.000Z'); // 89 d 23 h 59 m 59 s
+      await expect(get.execute('u1', 's1')).resolves.toBeDefined();
+
+      now = new Date('2026-04-01T10:00:00.000Z'); // exactly 90 days
+      await expect(get.execute('u1', 's1')).rejects.toThrow(
+        SessionNotFoundError,
+      );
+      await expect(end.execute('u1', 's1')).rejects.toThrow(
+        SessionNotFoundError,
+      );
+      expect(completions.has('u1', 'case-1')).toBe(false);
+    });
+
+    it('runs from creation, not from the end of the session', async () => {
+      await start();
+      now = new Date('2026-03-30T10:00:00.000Z');
+      await end.execute('u1', 's1');
+      now = new Date('2026-04-01T10:00:00.000Z');
+      await expect(get.execute('u1', 's1')).rejects.toThrow(
+        SessionNotFoundError,
+      );
     });
   });
 });

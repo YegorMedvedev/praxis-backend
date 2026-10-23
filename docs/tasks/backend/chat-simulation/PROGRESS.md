@@ -10,7 +10,7 @@ Specs 03 and 04 of this milestone are app-side and are not part of this ledger.
 | 01 session-lifecycle-api (includes cleanup queue + worker with a fake remover) | done | 277f0b3 | Patient-ended parts (FR-5, AC-8) deferred by decision. |
 | 02 patient-message-exchange-streaming (fake generator only) | done | f66d852 | `session.ended`, FR-6, AC-7 deferred; AC-12 moved to 07/HUMAN-REQUIRED. |
 | 07 openai-agents-reply-generator | done | 4e0cbff | Contract tests against a fake client only; no real OpenAI calls by agents. |
-| 05 transcript-privacy-and-retention | todo | | Accepted deviations: OpenAI retention, US-only residency. |
+| 05 transcript-privacy-and-retention | done | PENDING | Accepted deviations: OpenAI retention, US-only residency. |
 
 ## Spec conflicts and assumptions (running list)
 
@@ -49,3 +49,12 @@ Specs 03 and 04 of this milestone are app-side and are not part of this ledger.
 - 07: deltas of subagent turns cannot be recognised on the delta event itself (it carries only `turn_id`); the adapter ignores deltas/done of turn ids it has already seen as subagent turns. The agents have no subagents, so this is defensive.
 - 07: SDK retries are off for every call, including delete and cancel; the cleanup worker's backoff is the retry for deletion.
 - 07: the replay format labels roles with plain `Role: text` lines, so a stored message containing a newline plus a role label can imitate another turn in the replayed input. Accepted for the placeholder; the final format (HUMAN-REQUIRED) should delimit messages unambiguously.
+
+- 05: the retention job runs every 6 hours (plus 60 s after boot) rather than "daily": a bare daily `setInterval` resets on restart and its worst case (24 h + pass duration) would exceed the NFR-1 allowance of 24 h; 6 hours is still "at least daily". The reasoning is in the runbook, AGENTS.md and a test pins the interval at 12 h or less.
+- 05: AC-6 conservative reading: sessions older than 90 days answer `session-not-found` from every session route (GET, PATCH, messages, replies) even before the job physically deletes them, so the 404 does not depend on job timing. `DELETE` is unaffected (idempotent 204).
+- 05: the retention clock is `created_at` for every status (an ended session that is still within 90 days of creation is kept; one older is purged, its completion stays).
+- 05 FR-8 / AC-19: a session with a NULL `openai_session_id` is deleted and enqueues nothing (no remote session is known); the leaked-remote-session gap from FR-18 stays a known gap. The erasure SQL is a single statement (CTEs), so deletion and queueing are one commit.
+- 05 AC-15 and FR-11: nothing to build (no support or analytics tooling exists); documented in the runbook. AC-12/FR-10/NFR-5 remain accepted deviations (HUMAN-REQUIRED). NFR-4 (HTTPS, encryption at rest) is a deployment concern, not testable here.
+
+
+- 05: a failing retention batch aborts the pass (it rolls back whole and the error propagates); the next pass retries from the start. It is detectable through `retention_purge_failed` and the audit query.

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   PostgreSqlContainer,
   StartedPostgreSqlContainer,
@@ -17,6 +19,7 @@ import { TypeOrmMessageRepository } from '../../src/modules/chat-simulation/infr
 import { CreateSession } from '../../src/modules/chat-simulation/application/create-session';
 import { DiscardSession } from '../../src/modules/chat-simulation/application/discard-session';
 import { EndSession } from '../../src/modules/chat-simulation/application/end-session';
+import { PurgeExpiredSessions } from '../../src/modules/chat-simulation/application/purge-expired-sessions';
 import { GetSession } from '../../src/modules/chat-simulation/application/get-session';
 import { Session } from '../../src/modules/chat-simulation/domain/session';
 import { AgentSessionDeletionOrmEntity } from '../../src/modules/chat-simulation/infrastructure/persistence/agent-session-deletion.orm-entity';
@@ -50,6 +53,7 @@ describe('Chat simulation repositories and unit of work (integration)', () => {
   let get: GetSession;
   let end: EndSession;
   let discard: DiscardSession;
+  let purge: PurgeExpiredSessions;
 
   const sql = <T = any>(query: string, params: unknown[] = []): Promise<T> =>
     dataSource.query(query, params);
@@ -141,9 +145,18 @@ describe('Chat simulation repositories and unit of work (integration)', () => {
       { next: () => `s${++nextId}` },
       clock,
     );
-    get = new GetSession(sessions);
+    get = new GetSession(sessions, clock);
     end = new EndSession(sessions, completions, uow, canceller, clock);
     discard = new DiscardSession(sessions, queue, uow, canceller, clock);
+    purge = new PurgeExpiredSessions(
+      sessions,
+      queue,
+      uow,
+      canceller,
+      clock,
+      2,
+      100,
+    );
   });
 
   afterAll(async () => {
@@ -587,6 +600,214 @@ describe('Chat simulation repositories and unit of work (integration)', () => {
         createdAt: t0,
       });
       expect((await messages.findLast(id))?.id).toBe('kept');
+    });
+  });
+
+  describe('retention and erasure (05)', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const runbook = (file: string) =>
+      readFileSync(join(__dirname, '../../docs/runbooks', file), 'utf8');
+    const queued = async () =>
+      (
+        await sql<{ openai_session_id: string }[]>(
+          'SELECT openai_session_id FROM chat_simulation.agent_session_deletions ORDER BY 1',
+        )
+      ).map((r) => r.openai_session_id);
+    const seed = async (
+      id: string,
+      ageDays: number,
+      opts: {
+        user?: string;
+        caseId?: string;
+        remote?: string | null;
+        inSync?: boolean;
+      } = {},
+    ) => {
+      await sql(
+        `INSERT INTO chat_simulation.sessions
+           (id, user_id, case_id, language, status, agent_id, openai_session_id, remote_in_sync, created_at)
+         VALUES ($1, $2, $3, 'en', 'IN_PROGRESS', 'agent-1', $4, $5, $6)`,
+        [
+          id,
+          opts.user ?? 'u1',
+          opts.caseId ?? `case-${id}`,
+          opts.remote ?? null,
+          opts.inSync ?? true,
+          new Date(t0.getTime() - ageDays * DAY),
+        ],
+      );
+      await addMessage(id, 'THERAPIST');
+      await addMessage(id, 'PATIENT');
+    };
+
+    it('deletes expired sessions and ALL their messages, queues remote ids in the same commit, keeps completion (AC-6, AC-13, AC-18)', async () => {
+      await seed('old', 91, { remote: 'remote-old' });
+      await seed('old-no-remote', 200);
+      await seed('old-out-of-sync', 95, {
+        remote: 'remote-oos',
+        inSync: false,
+      });
+      await seed('young', 10, { remote: 'remote-young' });
+      await sql(
+        `INSERT INTO case_library.case_completions (user_id, case_id, completed_at)
+         VALUES ('u1', 'case-old', now())`,
+      );
+
+      const result = await purge.execute();
+
+      expect(result).toMatchObject({ sessions: 3, remoteSessionsQueued: 2 });
+      expect(result.batches).toBe(2); // batch size 2
+      expect(
+        await sql('SELECT id FROM chat_simulation.sessions ORDER BY id'),
+      ).toEqual([{ id: 'young' }]);
+      expect(
+        await count(
+          `SELECT count(*) FROM chat_simulation.messages WHERE session_id <> 'young'`,
+        ),
+      ).toBe(0);
+      expect(await queued()).toEqual(['remote-old', 'remote-oos']);
+      expect(
+        await count('SELECT count(*) FROM case_library.case_completions'),
+      ).toBe(1);
+    });
+
+    it('is safe to run twice and never touches a session being written (SKIP LOCKED)', async () => {
+      await seed('old', 91, { remote: 'remote-old' });
+      await purge.execute();
+      await expect(purge.execute()).resolves.toMatchObject({ sessions: 0 });
+      expect(await queued()).toEqual(['remote-old']);
+
+      await seed('locked', 91, { remote: 'remote-locked' });
+      const holder = dataSource.createQueryRunner();
+      await holder.connect();
+      await holder.startTransaction();
+      await holder.query(
+        `SELECT 1 FROM chat_simulation.sessions WHERE id = 'locked' FOR UPDATE`,
+      );
+      try {
+        await expect(purge.execute()).resolves.toMatchObject({ sessions: 0 });
+      } finally {
+        await holder.rollbackTransaction();
+        await holder.release();
+      }
+      await expect(purge.execute()).resolves.toMatchObject({ sessions: 1 });
+      expect(await queued()).toEqual(['remote-locked', 'remote-old']);
+    });
+
+    it('rolls the deletion back when queueing fails (nothing deleted without its queue entry)', async () => {
+      await seed('old', 91, { remote: 'remote-old' });
+      const spy = jest
+        .spyOn(queue, 'enqueue')
+        .mockRejectedValueOnce(new Error('queue down'));
+
+      await expect(purge.execute()).rejects.toThrow('queue down');
+      spy.mockRestore();
+
+      expect(await count('SELECT count(*) FROM chat_simulation.sessions')).toBe(
+        1,
+      );
+      expect(await count('SELECT count(*) FROM chat_simulation.messages')).toBe(
+        2,
+      );
+    });
+
+    it('answers not found for an expired session before the job runs, then after (AC-6)', async () => {
+      await seed('old', 91, { remote: 'remote-old' });
+      await expect(get.execute('u1', 'old')).rejects.toThrow(
+        'session not found',
+      );
+      await purge.execute();
+      await expect(get.execute('u1', 'old')).rejects.toThrow(
+        'session not found',
+      );
+    });
+
+    it('manual erasure runbook deletes all sessions of the user and queues remote ids, including null-id sessions (AC-8, AC-19)', async () => {
+      for (let i = 1; i <= 5; i++) {
+        await seed(`a${i}`, i, {
+          remote: i <= 3 ? `remote-a${i}` : null,
+          inSync: i !== 2,
+        });
+      }
+      await seed('other', 1, { user: 'u2', remote: 'remote-other' });
+      await sql(
+        `INSERT INTO chat_simulation.agent_session_deletions (openai_session_id, attempts, next_attempt_at, created_at)
+         VALUES ('remote-a1', 0, now(), now())`,
+      );
+
+      const erasure = runbook('chat-simulation-user-erasure.sql');
+      const [row] = await sql(erasure, ['u1']);
+
+      expect(row).toEqual({
+        sessions_deleted: '5',
+        sessions_with_remote_id: '3',
+        remote_sessions_queued: '2', // remote-a1 was already queued
+      });
+      expect(await queued()).toEqual(['remote-a1', 'remote-a2', 'remote-a3']);
+      const [check] = await sql(
+        runbook('chat-simulation-user-erasure-check.sql'),
+        ['u1'],
+      );
+      expect(check).toEqual({ sessions_left: '0', orphan_messages: '0' });
+      for (let i = 1; i <= 5; i++) {
+        await expect(get.execute('u1', `a${i}`)).rejects.toThrow(
+          'session not found',
+        );
+      }
+      // The other user is untouched, and a re-run changes nothing.
+      expect(
+        await count(
+          `SELECT count(*) FROM chat_simulation.sessions WHERE user_id = 'u2'`,
+        ),
+      ).toBe(1);
+      const [again] = await sql(erasure, ['u1']);
+      expect(again).toEqual({
+        sessions_deleted: '0',
+        sessions_with_remote_id: '0',
+        remote_sessions_queued: '0',
+      });
+    });
+
+    it('the audit query reports transcripts past 90 d + 24 h and overdue remote deletions (NFR-1, AC-7)', async () => {
+      const audit = runbook('chat-simulation-retention-audit.sql');
+      await sql(`DELETE FROM chat_simulation.sessions`);
+      const real = Date.now();
+      const ago = (days: number) => new Date(real - days * DAY);
+      const insert = async (id: string, created: Date) => {
+        await sql(
+          `INSERT INTO chat_simulation.sessions (id, user_id, case_id, language, status, agent_id, created_at)
+           VALUES ($1, 'u9', $2, 'en', 'IN_PROGRESS', 'a', $3)`,
+          [id, `c-${id}`, created],
+        );
+        await addMessage(id, 'THERAPIST');
+      };
+      await insert('fresh', ago(1));
+      await insert('in-grace', ago(90.5)); // past 90 d, inside the 24 h allowance
+      expect((await sql(audit))[0]).toMatchObject({
+        sessions_past_deadline: '0',
+        messages_past_deadline: '0',
+        orphan_messages: '0',
+        remote_deletions_overdue: '0',
+      });
+
+      await insert('overdue', ago(92));
+      await sql(
+        `INSERT INTO chat_simulation.agent_session_deletions (openai_session_id, attempts, next_attempt_at, created_at)
+         VALUES ('stuck', 3, now(), now() - interval '25 hours')`,
+      );
+      expect((await sql(audit))[0]).toMatchObject({
+        sessions_past_deadline: '1',
+        messages_past_deadline: '1',
+        remote_deletions_overdue: '1',
+        remote_deletions_pending: '1',
+      });
+
+      now = new Date(real);
+      await purge.execute();
+      expect((await sql(audit))[0]).toMatchObject({
+        sessions_past_deadline: '0',
+        messages_past_deadline: '0',
+      });
     });
   });
 });
