@@ -10,7 +10,7 @@ Specs 03 and 04 of this milestone are app-side and are not part of this ledger.
 | 01 session-lifecycle-api (includes cleanup queue + worker with a fake remover) | done | 277f0b3 | Patient-ended parts (FR-5, AC-8) deferred by decision. |
 | 02 patient-message-exchange-streaming (fake generator only) | done | f66d852 | `session.ended`, FR-6, AC-7 deferred; AC-12 moved to 07/HUMAN-REQUIRED. |
 | 07 openai-agents-reply-generator | done | 4e0cbff | Contract tests against a fake client only; no real OpenAI calls by agents. |
-| 05 transcript-privacy-and-retention | done | PENDING | Accepted deviations: OpenAI retention, US-only residency. |
+| 05 transcript-privacy-and-retention | done | eb4dc0f | Accepted deviations: OpenAI retention, US-only residency. |
 
 ## Spec conflicts and assumptions (running list)
 
