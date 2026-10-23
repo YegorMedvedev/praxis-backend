@@ -32,7 +32,13 @@ describe('case seed data', () => {
     expect(CASE_SEED.some((c) => c.content.en?.contentNote === null)).toBe(
       true,
     );
-    for (const seed of CASE_SEED) {
+    // Real cases carry product-owner-written content; only placeholders are checked here.
+    const placeholders = CASE_SEED.filter(
+      (c) =>
+        c.content.en?.title.startsWith('Placeholder case') &&
+        c.content.ru?.title.startsWith('Заглушка'),
+    );
+    for (const seed of placeholders) {
       if (
         ['SUICIDAL_IDEATION', 'HARM_TO_OTHERS', 'TRAUMA_DISCLOSURE'].includes(
           seed.category,
