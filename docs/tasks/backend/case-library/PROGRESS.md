@@ -4,7 +4,7 @@ Order: 03 first (domain, completion port, progress), then 01 (list), then 02 (de
 
 | Task | Status | Commit | Notes |
 |---|---|---|---|
-| 03 completion-and-progress (module scaffold, domain, completion use case + public API, `GET /me/case-progress`, migration, seed) | todo | | |
+| 03 completion-and-progress (module scaffold, domain, completion use case + public API, `GET /me/case-progress`, migration, seed) | done | 9a56308 | lint/test/arch/integration/e2e green (orchestrator-run, Node 24, Ryuk off). 1 review, 0 blocking. Unmet: spec AC-16 (per-user 429; only global per-IP limiter applies; see HUMAN-REQUIRED). Non-blocking follow-ups: length/NUL guard in RecordCaseCompletion; assert no-store on 401/405 in e2e. |
 | 01 case-catalog-api (`GET /cases`) | todo | | |
 | 02 case-detail-api (`GET /cases/{case_id}`, `case-not-found`) | todo | | |
 
