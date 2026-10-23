@@ -44,6 +44,8 @@ export const PROBLEMS: Record<ProblemName, ProblemDefinition> = {
   'account-disabled': { status: 403, title: 'Account Disabled' },
   'profile-not-found': { status: 404, title: 'Profile Not Found' },
   'case-not-found': { status: 404, title: 'Case Not Found' },
+  'session-not-found': { status: 404, title: 'Session Not Found' },
+  'session-ended': { status: 409, title: 'Session Ended' },
   'invalid-request': { status: 400, title: 'Invalid Request' },
   'rate-limited': { status: 429, title: 'Too Many Requests' },
   'internal-error': {

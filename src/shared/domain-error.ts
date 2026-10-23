@@ -9,6 +9,8 @@ export const ERROR_CODES = [
   'account-disabled',
   'profile-not-found',
   'case-not-found',
+  'session-not-found',
+  'session-ended',
   'invalid-request',
   'rate-limited',
   'service-unavailable',
@@ -67,6 +69,16 @@ export class ProfileNotFoundError extends DomainError {
 
 export class CaseNotFoundError extends DomainError {
   readonly code = 'case-not-found';
+}
+
+/** Unknown, not owned, discarded or deleted: indistinguishable on purpose. */
+export class SessionNotFoundError extends DomainError {
+  readonly code = 'session-not-found';
+}
+
+/** The operation needs an `IN_PROGRESS` session. */
+export class SessionEndedError extends DomainError {
+  readonly code = 'session-ended';
 }
 
 export class ServiceUnavailableError extends DomainError {

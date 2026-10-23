@@ -233,6 +233,38 @@ when touching the area.
   (non-blank, <= 128 chars, no whitespace/control characters); an omitted id leaves the
   stored one untouched. The shipped seed has none.
 
+## Chat simulation
+
+- `chat-simulation` owns practice sessions (schema `chat_simulation`: `sessions`, `messages`,
+  `agent_session_deletions`). No foreign keys to other schemas; user and case ids are plain
+  columns. `GET/POST /api/v1/sessions`, `GET/PATCH/DELETE /api/v1/sessions/{session_id}`.
+  Session ids are opaque; another user's session is `session-not-found` (404), never 403, and
+  `DELETE` answers 204 whether or not the session existed.
+- One session per (user, case): creating a session discards every other one for that case in the
+  same transaction (advisory lock plus a unique index). Ending marks the case completed through
+  `RecordCaseCompletion` (case-library public API) **in the same transaction**.
+- **Cross-module atomicity.** Modules do not pass transactions around. `UnitOfWork`
+  (domain port) is adapted by `TypeOrmUnitOfWork`, which opens a transaction via
+  `platform/database/transaction-context.ts` (`AsyncLocalStorage`). Any TypeORM repository that
+  wraps itself in `activeRepository(...)` joins the ambient transaction; case-library's
+  completion repository does. Outside a unit of work they behave as before. New repositories that
+  must be atomic with a session change need the same one-line wrap.
+- The patient cannot end a session in this milestone: `ENDED_BY_PATIENT` exists in the contract
+  and domain (a restored session in that state answers `session-ended` to `PATCH`) but nothing
+  produces it.
+- Server-side attributes `agent_id`, `openai_session_id`, `remote_in_sync` are never serialised
+  or logged. Request logs carry the route template only (no ids, no bodies).
+- **Remote cleanup.** Discarding a session (DELETE, replacement) enqueues its
+  `openai_session_id` in `agent_session_deletions` in the same commit. `SessionDeletionWorker`
+  (in-process, 30 s interval, single-instance, not started when `NODE_ENV=test`) calls
+  `ProcessSessionDeletions`, which deletes via the `RemoteSessionRemover` port and retries with
+  exponential backoff (30 s doubling, cap 1 h). It is idempotent and never blocks or fails
+  session removal.
+- **Placeholders until later tasks.** `REMOTE_SESSION_REMOVER` is bound to
+  `UnconfiguredRemoteSessionRemover` (always fails, so nothing is ever reported deleted; safe
+  because no session has an `openai_session_id` before task 07 replaces it). The
+  `SessionGenerationCanceller` is a no-op until task 02 binds its generation registry.
+
 ## Public endpoints
 
 Every route requires a Firebase bearer token except those marked `@Public()`
@@ -261,3 +293,5 @@ lowercased address) are all silent; only the stage and error class are logged as
 - `GET /api/v1/users/:id` is currently unauthenticated and returns full user details
   (including email) by design — no guard was specified for this endpoint in the original
   plan. Don't mistake the silence for a considered access-control decision.
+
+- Never start background work (fire-and-forget promises, event handlers) inside `UnitOfWork.run`: it inherits the ambient transaction (`platform/database/transaction-context.ts`) and would use a released query runner.
