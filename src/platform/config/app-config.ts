@@ -5,7 +5,12 @@ export interface AppConfig {
   PORT: number;
   /** Number of trusted reverse-proxy hops in front of the app; 0 trusts none. */
   TRUST_PROXY_HOPS: number;
-  DATABASE_URL: string;
+  DB_HOST: string;
+  DB_PORT: number;
+  DB_USER: string;
+  /** Secret; never logged or given a default. */
+  DB_PASSWORD: string;
+  DB_NAME: string;
   FIREBASE_PROJECT_ID: string;
   /** Raw service-account JSON (a secret); absent means Application Default Credentials. */
   FIREBASE_CREDENTIALS_JSON?: string;
@@ -24,6 +29,10 @@ export interface AppConfig {
   /** Requests per client IP per window on POST /auth/password-reset. */
   PASSWORD_RESET_RATE_LIMIT: number;
   PASSWORD_RESET_RATE_WINDOW_MS: number;
+  /** Browser origins allowed by CORS; empty disables CORS, ['*'] allows any (never in production). */
+  CORS_ALLOWED_ORIGINS: string[];
+  /** How long browsers may cache a preflight answer. */
+  CORS_MAX_AGE_SECONDS: number;
 }
 
 const NODE_ENVS: readonly string[] = ['development', 'test', 'production'];
@@ -111,9 +120,27 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     problems.push('TRUST_PROXY_HOPS must be a non-negative integer');
   }
 
-  const databaseUrl = raw.DATABASE_URL;
-  if (typeof databaseUrl !== 'string' || databaseUrl.length === 0) {
-    problems.push('DATABASE_URL is required');
+  const dbSettings = {} as Record<
+    'DB_HOST' | 'DB_USER' | 'DB_PASSWORD' | 'DB_NAME',
+    string
+  >;
+  for (const name of [
+    'DB_HOST',
+    'DB_USER',
+    'DB_PASSWORD',
+    'DB_NAME',
+  ] as const) {
+    const value = raw[name];
+    if (typeof value !== 'string' || value.length === 0) {
+      problems.push(`${name} is required`);
+    } else {
+      dbSettings[name] = value;
+    }
+  }
+
+  const dbPort = Number(raw.DB_PORT ?? 5432);
+  if (!Number.isInteger(dbPort) || dbPort < 1 || dbPort > 65535) {
+    problems.push('DB_PORT must be an integer between 1 and 65535');
   }
 
   const projectId = raw.FIREBASE_PROJECT_ID;
@@ -194,6 +221,57 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     problems.push('PASSWORD_RESET_RATE_WINDOW_MS must be a positive integer');
   }
 
+  const corsOrigins: string[] = [];
+  const rawCors = raw.CORS_ALLOWED_ORIGINS;
+  if (rawCors !== undefined && rawCors !== null) {
+    if (typeof rawCors !== 'string') {
+      problems.push('CORS_ALLOWED_ORIGINS must be a comma-separated list');
+    } else if (rawCors.trim().length > 0) {
+      const items = rawCors.split(',').map((item) => item.trim());
+      if (items.includes('*')) {
+        if (items.length > 1) {
+          problems.push(
+            'CORS_ALLOWED_ORIGINS must not mix * with other origins',
+          );
+        } else if (nodeEnv === 'production') {
+          problems.push(
+            'CORS_ALLOWED_ORIGINS must not be * when NODE_ENV is production',
+          );
+        } else {
+          corsOrigins.push('*');
+        }
+      } else {
+        for (const item of items) {
+          const origin = parseOrigin(item);
+          if (!origin) {
+            problems.push(
+              'CORS_ALLOWED_ORIGINS must be comma-separated absolute http(s) origins without path',
+            );
+            break;
+          }
+          if (!corsOrigins.includes(origin.origin)) {
+            corsOrigins.push(origin.origin);
+          }
+        }
+      }
+    }
+  }
+
+  const rawCorsAge = raw.CORS_MAX_AGE_SECONDS;
+  const corsMaxAge =
+    rawCorsAge === undefined || rawCorsAge === null ? 600 : Number(rawCorsAge);
+  if (
+    typeof rawCorsAge === 'boolean' ||
+    (typeof rawCorsAge === 'string' && rawCorsAge.trim() === '') ||
+    !Number.isInteger(corsMaxAge) ||
+    corsMaxAge < 0 ||
+    corsMaxAge > 86_400
+  ) {
+    problems.push(
+      'CORS_MAX_AGE_SECONDS must be an integer between 0 and 86400',
+    );
+  }
+
   if (problems.length > 0) {
     throw new Error(`Invalid environment: ${problems.join('; ')}`);
   }
@@ -202,13 +280,19 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     NODE_ENV: nodeEnv as NodeEnv,
     PORT: port,
     TRUST_PROXY_HOPS: hops,
-    DATABASE_URL: databaseUrl as string,
+    DB_HOST: dbSettings.DB_HOST,
+    DB_PORT: dbPort,
+    DB_USER: dbSettings.DB_USER,
+    DB_PASSWORD: dbSettings.DB_PASSWORD,
+    DB_NAME: dbSettings.DB_NAME,
     FIREBASE_PROJECT_ID: projectId as string,
     FIREBASE_CREDENTIALS_JSON: credentials,
     FIREBASE_AUTH_EMULATOR_HOST: emulatorHost,
     CONSENT_TERMS_VERSIONS: termsVersions as string[],
     CONSENT_PRIVACY_VERSIONS: privacyVersions as string[],
     APP_BASE_URL: (appBase as URL).origin,
+    CORS_ALLOWED_ORIGINS: corsOrigins,
+    CORS_MAX_AGE_SECONDS: corsMaxAge,
     RESEND_API_KEY: (resendKey as string).trim(),
     PASSWORD_RESET_EMAIL_FROM: (resetFrom as string).trim(),
     PASSWORD_RESET_RATE_LIMIT: resetLimit as number,

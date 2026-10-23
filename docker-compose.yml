@@ -1,0 +1,22 @@
+# Local development database. The credentials match the DB_* variables in .env.example.
+# Local use only: never reuse these values outside your machine.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: praxis-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: praxis
+    ports:
+      - '5432:5432'
+    volumes:
+      - praxis-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d praxis']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  praxis-pgdata:

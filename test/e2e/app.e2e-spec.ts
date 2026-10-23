@@ -69,11 +69,16 @@ describe('Application (e2e)', () => {
       new PostgreSqlContainer('postgres:17-alpine').start(),
       startFirebaseEmulator(),
     ]);
-    process.env.DATABASE_URL = postgres.getConnectionUri();
+    process.env.DB_HOST = postgres.getHost();
+    process.env.DB_PORT = String(postgres.getPort());
+    process.env.DB_USER = postgres.getUsername();
+    process.env.DB_PASSWORD = postgres.getPassword();
+    process.env.DB_NAME = postgres.getDatabase();
     process.env.FIREBASE_PROJECT_ID = EMULATOR_PROJECT_ID;
     process.env.FIREBASE_AUTH_EMULATOR_HOST = emulator.host;
     process.env.CONSENT_TERMS_VERSIONS = 'T1,T2';
     process.env.CONSENT_PRIVACY_VERSIONS = 'P1,P2';
+    process.env.CORS_ALLOWED_ORIGINS = 'https://app.example.test';
     process.env.APP_BASE_URL = APP_BASE_URL;
     process.env.RESEND_API_KEY = RESEND_API_KEY;
     process.env.PASSWORD_RESET_EMAIL_FROM = 'no-reply@mail.example.test';
@@ -251,6 +256,51 @@ describe('Application (e2e)', () => {
         withoutType(missing.body),
       );
       expect(withoutType(garbage.body)).toEqual(withoutType(missing.body));
+    });
+  });
+
+  describe('CORS', () => {
+    const ORIGIN = 'https://app.example.test';
+
+    it('answers a preflight without a token for an allowed origin', async () => {
+      const response = await request(server())
+        .options('/api/v1/me')
+        .set('Origin', ORIGIN)
+        .set('Access-Control-Request-Method', 'PUT')
+        .set('Access-Control-Request-Headers', 'authorization,content-type')
+        .expect(204);
+
+      expect(response.headers['access-control-allow-origin']).toBe(ORIGIN);
+      expect(response.headers['access-control-allow-methods']).toContain('PUT');
+      expect(
+        response.headers['access-control-allow-headers']?.toLowerCase(),
+      ).toContain('authorization');
+      expect(response.headers['access-control-max-age']).toBe('600');
+      expect(
+        response.headers['access-control-allow-credentials'],
+      ).toBeUndefined();
+    });
+
+    it('adds CORS headers to real responses, including errors', async () => {
+      const response = await request(server())
+        .get('/api/v1/me')
+        .set('Origin', ORIGIN)
+        .expect(401);
+
+      expect(response.headers['access-control-allow-origin']).toBe(ORIGIN);
+      expect(response.headers['access-control-expose-headers']).toContain(
+        'X-Flow-ID',
+      );
+      expect(response.headers.vary).toContain('Origin');
+    });
+
+    it('sends no CORS headers to a disallowed origin', async () => {
+      const response = await request(server())
+        .options('/api/v1/me')
+        .set('Origin', 'https://evil.example.test')
+        .set('Access-Control-Request-Method', 'GET');
+
+      expect(response.headers['access-control-allow-origin']).toBeUndefined();
     });
   });
 

@@ -1,7 +1,10 @@
 import { validateEnv } from './app-config';
 
 const base = {
-  DATABASE_URL: 'postgres://db/praxis',
+  DB_HOST: 'db.internal',
+  DB_USER: 'praxis',
+  DB_PASSWORD: 'pw-fake',
+  DB_NAME: 'praxis',
   FIREBASE_PROJECT_ID: 'fake-project',
   CONSENT_TERMS_VERSIONS: 'T1',
   CONSENT_PRIVACY_VERSIONS: 'P1',
@@ -16,7 +19,11 @@ describe('validateEnv', () => {
       NODE_ENV: 'development',
       PORT: 3000,
       TRUST_PROXY_HOPS: 0,
-      DATABASE_URL: 'postgres://db/praxis',
+      DB_HOST: 'db.internal',
+      DB_PORT: 5432,
+      DB_USER: 'praxis',
+      DB_PASSWORD: 'pw-fake',
+      DB_NAME: 'praxis',
       FIREBASE_PROJECT_ID: 'fake-project',
       FIREBASE_CREDENTIALS_JSON: undefined,
       FIREBASE_AUTH_EMULATOR_HOST: undefined,
@@ -27,6 +34,8 @@ describe('validateEnv', () => {
       PASSWORD_RESET_EMAIL_FROM: 'no-reply@mail.example.test',
       PASSWORD_RESET_RATE_LIMIT: 5,
       PASSWORD_RESET_RATE_WINDOW_MS: 60_000,
+      CORS_ALLOWED_ORIGINS: [],
+      CORS_MAX_AGE_SECONDS: 600,
     });
   });
 
@@ -154,10 +163,109 @@ describe('validateEnv', () => {
     );
   });
 
-  it('fails when DATABASE_URL is missing', () => {
-    expect(() => validateEnv({ FIREBASE_PROJECT_ID: 'p' })).toThrow(
-      'DATABASE_URL is required',
+  describe('CORS', () => {
+    it('is disabled (no origins) when unset or blank', () => {
+      expect(validateEnv(base).CORS_ALLOWED_ORIGINS).toEqual([]);
+      expect(
+        validateEnv({ ...base, CORS_ALLOWED_ORIGINS: '  ' })
+          .CORS_ALLOWED_ORIGINS,
+      ).toEqual([]);
+    });
+
+    it('parses a comma-separated list into normalised origins', () => {
+      expect(
+        validateEnv({
+          ...base,
+          CORS_ALLOWED_ORIGINS:
+            'http://localhost:8081/, https://app.example.test ,http://localhost:8081',
+        }).CORS_ALLOWED_ORIGINS,
+      ).toEqual(['http://localhost:8081', 'https://app.example.test']);
+    });
+
+    it.each([
+      'app.example.test',
+      'ftp://app.example.test',
+      'https://app.example.test/path',
+      'https://user:pw@app.example.test',
+      'https://a.example.test,,https://b.example.test',
+    ])('rejects invalid origin list %p', (value) => {
+      expect(() =>
+        validateEnv({ ...base, CORS_ALLOWED_ORIGINS: value }),
+      ).toThrow('CORS_ALLOWED_ORIGINS');
+    });
+
+    it('allows * outside production only', () => {
+      expect(
+        validateEnv({ ...base, CORS_ALLOWED_ORIGINS: '*' })
+          .CORS_ALLOWED_ORIGINS,
+      ).toEqual(['*']);
+      expect(() =>
+        validateEnv({
+          ...base,
+          NODE_ENV: 'production',
+          CORS_ALLOWED_ORIGINS: '*',
+        }),
+      ).toThrow(
+        'CORS_ALLOWED_ORIGINS must not be * when NODE_ENV is production',
+      );
+    });
+
+    it('does not mix * with other origins', () => {
+      expect(() =>
+        validateEnv({
+          ...base,
+          CORS_ALLOWED_ORIGINS: '*,https://app.example.test',
+        }),
+      ).toThrow('CORS_ALLOWED_ORIGINS');
+    });
+
+    it('validates CORS_MAX_AGE_SECONDS', () => {
+      expect(
+        validateEnv({ ...base, CORS_MAX_AGE_SECONDS: '0' })
+          .CORS_MAX_AGE_SECONDS,
+      ).toBe(0);
+      for (const value of ['-1', '86401', 'abc', '1.5', '']) {
+        expect(() =>
+          validateEnv({ ...base, CORS_MAX_AGE_SECONDS: value }),
+        ).toThrow(
+          'CORS_MAX_AGE_SECONDS must be an integer between 0 and 86400',
+        );
+      }
+    });
+  });
+
+  describe('database', () => {
+    it.each(['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'])(
+      'requires %s',
+      (name) => {
+        expect(() => validateEnv({ ...base, [name]: undefined })).toThrow(
+          `${name} is required`,
+        );
+        expect(() => validateEnv({ ...base, [name]: '' })).toThrow(
+          `${name} is required`,
+        );
+      },
     );
+
+    it('accepts an explicit DB_PORT', () => {
+      expect(validateEnv({ ...base, DB_PORT: '6543' }).DB_PORT).toBe(6543);
+    });
+
+    it.each(['abc', '0', '70000', '5432.5'])('rejects DB_PORT %p', (value) => {
+      expect(() => validateEnv({ ...base, DB_PORT: value })).toThrow(
+        'DB_PORT must be an integer between 1 and 65535',
+      );
+    });
+
+    it('never echoes DB_PASSWORD', () => {
+      let message = '';
+      try {
+        validateEnv({ ...base, DB_PORT: 'abc', DB_PASSWORD: 'SECRET-PW' });
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).not.toContain('SECRET-PW');
+    });
   });
 
   it('rejects an invalid PORT and NODE_ENV', () => {
@@ -179,7 +287,6 @@ describe('validateEnv', () => {
         expect(() =>
           validateEnv({
             ...base,
-            DATABASE_URL: 'x',
             FIREBASE_PROJECT_ID: value,
           }),
         ).toThrow('FIREBASE_PROJECT_ID is required');

@@ -8,7 +8,11 @@ if (existsSync('.env')) {
 /** Used by the TypeORM CLI (`pnpm migration:*`); the app uses DatabaseModule. */
 export default new DataSource({
   type: 'postgres',
-  url: process.env.DATABASE_URL,
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT ?? 5432),
+  username: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
   entities: ['src/modules/*/infrastructure/**/*.orm-entity.ts'],
   migrations: ['src/platform/database/migrations/*.ts'],
   synchronize: false,

@@ -1,11 +1,12 @@
 import type { INestApplication } from '@nestjs/common';
 import { SwaggerModule } from '@nestjs/swagger';
-import { applyTrustProxy, configureApp } from './configure-app';
+import { applyCors, applyTrustProxy, configureApp } from './configure-app';
 
 function fakeApp(config: Record<string, unknown>) {
   const expressApp = { set: jest.fn() };
   const app = {
     use: jest.fn(),
+    enableCors: jest.fn(),
     useBodyParser: jest.fn(),
     setGlobalPrefix: jest.fn(),
     useGlobalPipes: jest.fn(),
@@ -21,7 +22,11 @@ describe('configureApp', () => {
   it('does not publish the API docs in production', () => {
     const create = jest.spyOn(SwaggerModule, 'createDocument');
     const setup = jest.spyOn(SwaggerModule, 'setup');
-    const { app } = fakeApp({ NODE_ENV: 'production', TRUST_PROXY_HOPS: 1 });
+    const { app } = fakeApp({
+      NODE_ENV: 'production',
+      TRUST_PROXY_HOPS: 1,
+      CORS_ALLOWED_ORIGINS: [],
+    });
 
     configureApp(app);
 
@@ -36,7 +41,11 @@ describe('configureApp', () => {
     const setup = jest
       .spyOn(SwaggerModule, 'setup')
       .mockImplementation(() => undefined);
-    const { app } = fakeApp({ NODE_ENV: 'development', TRUST_PROXY_HOPS: 0 });
+    const { app } = fakeApp({
+      NODE_ENV: 'development',
+      TRUST_PROXY_HOPS: 0,
+      CORS_ALLOWED_ORIGINS: [],
+    });
 
     configureApp(app);
 
@@ -47,11 +56,42 @@ describe('configureApp', () => {
     const { app, expressApp } = fakeApp({
       NODE_ENV: 'production',
       TRUST_PROXY_HOPS: 2,
+      CORS_ALLOWED_ORIGINS: [],
     });
 
     configureApp(app);
 
     expect(expressApp.set).toHaveBeenCalledWith('trust proxy', 2);
+  });
+});
+
+describe('applyCors', () => {
+  it('adds no CORS headers when no origin is configured', () => {
+    const { app } = fakeApp({});
+    applyCors(app, [], 600);
+    expect(app.enableCors).not.toHaveBeenCalled();
+  });
+
+  it('allows exactly the configured origins, without credentials', () => {
+    const { app } = fakeApp({});
+    applyCors(app, ['https://app.example.test'], 120);
+    expect(app.enableCors).toHaveBeenCalledWith(
+      expect.objectContaining({
+        origin: ['https://app.example.test'],
+        credentials: false,
+        maxAge: 120,
+        allowedHeaders: expect.arrayContaining(['Authorization', 'X-Flow-ID']),
+        exposedHeaders: expect.arrayContaining(['X-Flow-ID', 'Retry-After']),
+      }),
+    );
+  });
+
+  it('uses a wildcard origin for *', () => {
+    const { app } = fakeApp({});
+    applyCors(app, ['*'], 600);
+    expect(app.enableCors).toHaveBeenCalledWith(
+      expect.objectContaining({ origin: '*', credentials: false }),
+    );
   });
 });
 

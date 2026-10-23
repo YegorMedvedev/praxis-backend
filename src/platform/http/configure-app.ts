@@ -23,18 +23,55 @@ export function applyTrustProxy(app: INestApplication, hops: number): void {
   app.getHttpAdapter().getInstance().set('trust proxy', hops);
 }
 
+export const CORS_ALLOWED_HEADERS = [
+  'Authorization',
+  'Content-Type',
+  'Accept-Language',
+  'Idempotency-Key',
+  'X-Flow-ID',
+];
+export const CORS_EXPOSED_HEADERS = ['X-Flow-ID', 'Retry-After', 'Location'];
+const CORS_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
+/**
+ * Enables CORS for the configured origins. No origins means no CORS headers at
+ * all (same-origin only). Credentials are never allowed: the API authenticates
+ * with a bearer header, not cookies. Must run before the auth guard so that
+ * preflight requests (which carry no token) are answered.
+ */
+export function applyCors(
+  app: INestApplication,
+  origins: string[],
+  maxAgeSeconds: number,
+): void {
+  if (origins.length === 0) return;
+  app.enableCors({
+    origin: origins.includes('*') ? '*' : origins,
+    methods: CORS_METHODS,
+    allowedHeaders: CORS_ALLOWED_HEADERS,
+    exposedHeaders: CORS_EXPOSED_HEADERS,
+    credentials: false,
+    maxAge: maxAgeSeconds,
+  });
+}
+
 /** Shared by `main.ts` and the e2e tests so both run the same HTTP setup. */
 export function configureApp(app: INestApplication): void {
   // Order matters: the flow id first (logging and the problem filter read
   // it), then logging so even rejected requests are recorded.
   app.use(flowIdMiddleware());
   app.use(requestLoggingMiddleware(new Logger('HttpRequest')));
+  const config = app.get<ConfigService<AppConfig, true>>(ConfigService);
+  applyCors(
+    app,
+    config.get('CORS_ALLOWED_ORIGINS', { infer: true }),
+    config.get('CORS_MAX_AGE_SECONDS', { infer: true }),
+  );
   app.use(jsonContentTypeMiddleware());
   (app as NestExpressApplication).useBodyParser('json', {
     limit: MAX_BODY_BYTES,
   });
 
-  const config = app.get<ConfigService<AppConfig, true>>(ConfigService);
   applyTrustProxy(app, config.get('TRUST_PROXY_HOPS', { infer: true }));
 
   app.setGlobalPrefix(API_PREFIX);

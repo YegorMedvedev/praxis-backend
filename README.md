@@ -31,6 +31,20 @@
 $ npm install
 ```
 
+## Local database
+
+The app reads `DB_HOST`, `DB_PORT` (default 5432), `DB_USER`, `DB_PASSWORD` and `DB_NAME` (validated at boot in `src/platform/config/app-config.ts`,
+used by `src/platform/database/database.module.ts`; the TypeORM CLI reads the same variables from `.env`).
+
+```bash
+cp .env.example .env          # DB_* already point at the compose database
+docker compose up -d postgres # PostgreSQL 17 on localhost:5432
+pnpm migration:run            # migrations are never run automatically
+pnpm start:dev
+```
+
+`docker compose down` stops it; add `-v` to also delete the data volume.
+
 ## Compile and run the project
 
 ```bash
