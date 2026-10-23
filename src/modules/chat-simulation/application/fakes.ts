@@ -1,6 +1,14 @@
 import type { CaseAgentDirectory } from '../domain/case-agent-directory';
 import type { CaseCompletionRecorder } from '../domain/case-completion-recorder';
+import { ReplyGenerationFailedError } from '../../../shared/domain-error';
 import type { Language } from '../domain/language';
+import type { Message } from '../domain/message';
+import type { MessageRepository } from '../domain/message-repository';
+import type {
+  PatientReplyGenerator,
+  ReplyChunk,
+  ReplyRequest,
+} from '../domain/patient-reply-generator';
 import type {
   PendingRemoteDeletion,
   RemoteSessionDeletionQueue,
@@ -66,6 +74,13 @@ export class InMemorySessionRepository
       therapistMessageCount: counts.therapist,
       patientMessageCount: counts.patient,
     });
+  }
+
+  findOwned(id: string, userId: string): Promise<Session | null> {
+    const session = this.owned(id, userId);
+    return Promise.resolve(
+      session ? Session.restore(session.snapshot()) : null,
+    );
   }
 
   lockOwned(id: string, userId: string): Promise<Session | null> {
@@ -234,5 +249,154 @@ export class FakeRemoteSessionRemover implements RemoteSessionRemover {
     }
     this.removed.push(openaiSessionId);
     return Promise.resolve();
+  }
+}
+
+export class InMemoryMessageRepository
+  implements MessageRepository, Transactional
+{
+  readonly bySession = new Map<string, Message[]>();
+  /** When set, `append` rejects: simulates a failing write. */
+  failAppendWith: Error | null = null;
+
+  snapshot(): () => void {
+    const copy = new Map(
+      [...this.bySession].map(([id, list]) => [id, [...list]]),
+    );
+    return () => {
+      this.bySession.clear();
+      for (const [id, list] of copy) this.bySession.set(id, list);
+    };
+  }
+
+  all(sessionId: string): Message[] {
+    return [...(this.bySession.get(sessionId) ?? [])];
+  }
+
+  listBySession(sessionId: string): Promise<Message[]> {
+    return Promise.resolve(this.all(sessionId));
+  }
+
+  findLast(sessionId: string): Promise<Message | null> {
+    return Promise.resolve(this.all(sessionId).at(-1) ?? null);
+  }
+
+  append(message: Message): Promise<void> {
+    if (this.failAppendWith) return Promise.reject(this.failAppendWith);
+    this.bySession.set(message.sessionId, [
+      ...this.all(message.sessionId),
+      message,
+    ]);
+    return Promise.resolve();
+  }
+}
+
+export type ScriptStep =
+  | { type: 'remote-session'; openaiSessionId: string }
+  | { type: 'text'; text: string }
+  /** Pauses (abort-aware) before the next step. */
+  | { type: 'wait'; ms: number }
+  /** Rejects with `error` (default `ReplyGenerationFailedError`). */
+  | { type: 'fail'; error?: Error }
+  /** Never produces anything again; only the abort ends it. */
+  | { type: 'stall' };
+
+export interface ReplyScript {
+  steps: ScriptStep[];
+  /** Yield the final `completed` marker after the steps (default true). */
+  complete?: boolean;
+}
+
+const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
+  });
+
+/**
+ * Scripted `PatientReplyGenerator`. Each call plays the next queued script
+ * (or a one-delta success when none is queued). Abort-aware: a wait or stall
+ * ends as soon as the signal aborts, and `aborted` counts such endings.
+ */
+export class FakePatientReplyGenerator implements PatientReplyGenerator {
+  readonly requests: ReplyRequest[] = [];
+  /** Generations that were cut short by their abort signal. */
+  aborted = 0;
+  /** Generations that were started. */
+  started = 0;
+  private readonly scripts: ReplyScript[] = [];
+
+  static success(...deltas: string[]): ReplyScript {
+    return { steps: deltas.map((text) => ({ type: 'text', text })) };
+  }
+
+  /** Emits `deltas`, then fails. */
+  static failAfter(deltas: string[], error?: Error): ReplyScript {
+    return {
+      steps: [
+        ...deltas.map((text) => ({ type: 'text' as const, text })),
+        { type: 'fail', error },
+      ],
+    };
+  }
+
+  /** Emits `deltas`, then never produces anything again. */
+  static stallAfter(...deltas: string[]): ReplyScript {
+    return {
+      steps: [
+        ...deltas.map((text) => ({ type: 'text' as const, text })),
+        { type: 'stall' },
+      ],
+    };
+  }
+
+  enqueue(...scripts: ReplyScript[]): this {
+    this.scripts.push(...scripts);
+    return this;
+  }
+
+  async *generate(
+    request: ReplyRequest,
+    signal: AbortSignal,
+  ): AsyncGenerator<ReplyChunk> {
+    this.requests.push(request);
+    this.started += 1;
+    const script =
+      this.scripts.shift() ?? FakePatientReplyGenerator.success('Hello.');
+    for (const step of script.steps) {
+      if (signal.aborted) break;
+      switch (step.type) {
+        case 'remote-session':
+          yield {
+            kind: 'remote-session',
+            openaiSessionId: step.openaiSessionId,
+          };
+          break;
+        case 'text':
+          yield { kind: 'text', text: step.text };
+          break;
+        case 'wait':
+          await sleep(step.ms, signal);
+          break;
+        case 'stall':
+          await sleep(2_000_000_000, signal);
+          break;
+        case 'fail':
+          throw (
+            step.error ?? new ReplyGenerationFailedError('scripted failure')
+          );
+      }
+    }
+    if (signal.aborted) {
+      this.aborted += 1;
+      return;
+    }
+    if (script.complete !== false) yield { kind: 'completed' };
   }
 }

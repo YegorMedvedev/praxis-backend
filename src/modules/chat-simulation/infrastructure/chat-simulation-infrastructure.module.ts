@@ -5,8 +5,9 @@ import {
   CASE_AGENT_DIRECTORY,
   CASE_COMPLETION_RECORDER,
   REMOTE_SESSION_DELETION_QUEUE,
+  MESSAGE_REPOSITORY,
+  PATIENT_REPLY_GENERATOR,
   REMOTE_SESSION_REMOVER,
-  SESSION_GENERATION_CANCELLER,
   SESSION_REPOSITORY,
   UNIT_OF_WORK,
 } from '../chat-simulation.tokens';
@@ -15,20 +16,27 @@ import {
   CaseLibraryCompletionRecorder,
 } from './case-library-adapters';
 import { AgentSessionDeletionOrmEntity } from './persistence/agent-session-deletion.orm-entity';
+import { MessageOrmEntity } from './persistence/message.orm-entity';
 import { SessionOrmEntity } from './persistence/session.orm-entity';
+import { TypeOrmMessageRepository } from './persistence/typeorm-message.repository';
 import { TypeOrmSessionDeletionQueue } from './persistence/typeorm-session-deletion-queue';
 import { TypeOrmSessionRepository } from './persistence/typeorm-session.repository';
 import { TypeOrmUnitOfWork } from './persistence/typeorm-unit-of-work';
-import { NoActiveGenerations } from './remote/no-active-generations';
+import { UnconfiguredPatientReplyGenerator } from './remote/unconfigured-patient-reply-generator';
 import { UnconfiguredRemoteSessionRemover } from './remote/unconfigured-remote-session-remover';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([SessionOrmEntity, AgentSessionDeletionOrmEntity]),
+    TypeOrmModule.forFeature([
+      SessionOrmEntity,
+      MessageOrmEntity,
+      AgentSessionDeletionOrmEntity,
+    ]),
     CaseLibraryModule,
   ],
   providers: [
     { provide: SESSION_REPOSITORY, useClass: TypeOrmSessionRepository },
+    { provide: MESSAGE_REPOSITORY, useClass: TypeOrmMessageRepository },
     { provide: UNIT_OF_WORK, useClass: TypeOrmUnitOfWork },
     {
       provide: REMOTE_SESSION_DELETION_QUEUE,
@@ -39,25 +47,27 @@ import { UnconfiguredRemoteSessionRemover } from './remote/unconfigured-remote-s
       provide: CASE_COMPLETION_RECORDER,
       useClass: CaseLibraryCompletionRecorder,
     },
-    // Placeholders, replaced by tasks 07 (real OpenAI remover) and 02
-    // (in-process generation registry).
+    // Placeholders, both replaced by task 07 (the OpenAI adapters). Neither
+    // fakes content: the remover fails (the worker retries) and the generator
+    // fails every reply with `reply-generation-failed`.
     {
       provide: REMOTE_SESSION_REMOVER,
       useValue: new UnconfiguredRemoteSessionRemover(),
     },
     {
-      provide: SESSION_GENERATION_CANCELLER,
-      useValue: new NoActiveGenerations(),
+      provide: PATIENT_REPLY_GENERATOR,
+      useValue: new UnconfiguredPatientReplyGenerator(),
     },
   ],
   exports: [
     SESSION_REPOSITORY,
+    MESSAGE_REPOSITORY,
     UNIT_OF_WORK,
     REMOTE_SESSION_DELETION_QUEUE,
     CASE_AGENT_DIRECTORY,
     CASE_COMPLETION_RECORDER,
     REMOTE_SESSION_REMOVER,
-    SESSION_GENERATION_CANCELLER,
+    PATIENT_REPLY_GENERATOR,
   ],
 })
 export class ChatSimulationInfrastructureModule {}

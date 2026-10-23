@@ -6,6 +6,14 @@ import { DataSource } from 'typeorm';
 import { RecordCaseCompletion } from '../../src/modules/case-library/application/record-case-completion';
 import { CaseCompletionOrmEntity } from '../../src/modules/case-library/infrastructure/persistence/case-completion.orm-entity';
 import { TypeOrmCaseCompletionRepository } from '../../src/modules/case-library/infrastructure/persistence/typeorm-case-completion.repository';
+import { FakePatientReplyGenerator } from '../../src/modules/chat-simulation/application/fakes';
+import { GenerationRegistry } from '../../src/modules/chat-simulation/application/generation-registry';
+import { SendTherapistMessage } from '../../src/modules/chat-simulation/application/send-therapist-message';
+import { StreamPatientReply } from '../../src/modules/chat-simulation/application/stream-patient-reply';
+import { ReplyPendingError } from '../../src/shared/domain-error';
+import { activeManager } from '../../src/platform/database/transaction-context';
+import { MessageOrmEntity } from '../../src/modules/chat-simulation/infrastructure/persistence/message.orm-entity';
+import { TypeOrmMessageRepository } from '../../src/modules/chat-simulation/infrastructure/persistence/typeorm-message.repository';
 import { CreateSession } from '../../src/modules/chat-simulation/application/create-session';
 import { DiscardSession } from '../../src/modules/chat-simulation/application/discard-session';
 import { EndSession } from '../../src/modules/chat-simulation/application/end-session';
@@ -29,6 +37,11 @@ describe('Chat simulation repositories and unit of work (integration)', () => {
   let queue: TypeOrmSessionDeletionQueue;
   let uow: TypeOrmUnitOfWork;
   let completionRepo: TypeOrmCaseCompletionRepository;
+  let messages: TypeOrmMessageRepository;
+  let registry: GenerationRegistry;
+  let generator: FakePatientReplyGenerator;
+  let send: SendTherapistMessage;
+  let stream: StreamPatientReply;
   let now: Date;
   let nextId: number;
   let failRecording: boolean;
@@ -67,6 +80,7 @@ describe('Chat simulation repositories and unit of work (integration)', () => {
       url: container.getConnectionUri(),
       entities: [
         SessionOrmEntity,
+        MessageOrmEntity,
         AgentSessionDeletionOrmEntity,
         CaseCompletionOrmEntity,
       ],
@@ -99,7 +113,25 @@ describe('Chat simulation repositories and unit of work (integration)', () => {
       },
     };
     const agents = { findAgentId: () => Promise.resolve('agent-1') };
-    const canceller = { cancel: () => undefined };
+    registry = new GenerationRegistry();
+    const canceller = registry;
+    messages = new TypeOrmMessageRepository(
+      dataSource.getRepository(MessageOrmEntity),
+    );
+    generator = new FakePatientReplyGenerator();
+    const ids = { next: () => `g${++nextId}-${Math.random()}` };
+    send = new SendTherapistMessage(sessions, messages, uow, ids, clock);
+    stream = new StreamPatientReply(
+      sessions,
+      messages,
+      generator,
+      registry,
+      queue,
+      uow,
+      ids,
+      clock,
+      { idleTimeoutMs: 200, keepAliveMs: 500 },
+    );
     create = new CreateSession(
       sessions,
       agents,
@@ -367,6 +399,194 @@ describe('Chat simulation repositories and unit of work (integration)', () => {
         ),
       ).toBe(1);
       expect(await completed()).toBe(0);
+    });
+  });
+  describe('messages and patient replies', () => {
+    const start = async (userId = 'u1') =>
+      (await create.execute({ userId, caseId: 'c1', language: 'en' })).id;
+    const run = async (userId: string, id: string) => {
+      const events: { type: string }[] = [];
+      for await (const event of (await stream.execute(userId, id)).events) {
+        events.push(event);
+      }
+      return events;
+    };
+    const roles = async (id: string) =>
+      (await messages.listBySession(id)).map((m) => m.role);
+    const remoteState = async (id: string) =>
+      (
+        await sql<
+          { openai_session_id: string | null; remote_in_sync: boolean }[]
+        >(
+          'SELECT openai_session_id, remote_in_sync FROM chat_simulation.sessions WHERE id = $1',
+          [id],
+        )
+      )[0];
+
+    it('lists messages in the order they were stored, even when timestamps tie or go backwards', async () => {
+      const id = await start();
+      const at = (ms: number) => new Date(t0.getTime() + ms);
+      for (const [mid, role, ms] of [
+        ['a', 'PATIENT', 5],
+        ['b', 'THERAPIST', 5],
+        ['c', 'PATIENT', 1],
+      ] as const) {
+        await messages.append({
+          id: mid,
+          sessionId: id,
+          role,
+          text: mid,
+          createdAt: at(ms),
+        });
+      }
+
+      expect((await messages.listBySession(id)).map((m) => m.id)).toEqual([
+        'a',
+        'b',
+        'c',
+      ]);
+      expect((await messages.findLast(id))?.id).toBe('c');
+      await expect(messages.findLast('nope')).resolves.toBeNull();
+    });
+
+    it('stores the opening, the remote session and the in-sync flag atomically with the reply', async () => {
+      const id = await start();
+      generator.enqueue({
+        steps: [
+          { type: 'remote-session', openaiSessionId: 'remote-A' },
+          { type: 'text', text: 'Hel' },
+          { type: 'text', text: 'lo' },
+        ],
+      });
+
+      const events = await run('u1', id);
+
+      expect(events.map((e) => e.type)).toEqual([
+        'started',
+        'delta',
+        'delta',
+        'completed',
+      ]);
+      expect(await roles(id)).toEqual(['PATIENT']);
+      expect(await remoteState(id)).toEqual({
+        openai_session_id: 'remote-A',
+        remote_in_sync: true,
+      });
+    });
+
+    it('a failed reply stores nothing and leaves the remote out of sync; the retry stores exactly one', async () => {
+      const id = await start();
+      await run('u1', id); // opening
+      await send.execute('u1', id, 'Question');
+      generator.enqueue(
+        FakePatientReplyGenerator.failAfter(['part']),
+        FakePatientReplyGenerator.success('Answer'),
+      );
+
+      const failed = await run('u1', id);
+
+      expect(failed.at(-1)?.type).toBe('error');
+      expect(await roles(id)).toEqual(['PATIENT', 'THERAPIST']);
+      expect((await remoteState(id)).remote_in_sync).toBe(false);
+
+      const retried = await run('u1', id);
+
+      expect(retried.at(-1)?.type).toBe('completed');
+      expect(await roles(id)).toEqual(['PATIENT', 'THERAPIST', 'PATIENT']);
+      expect((await remoteState(id)).remote_in_sync).toBe(true);
+    });
+
+    it('concurrent therapist posts: exactly one is stored, the rest are reply-pending', async () => {
+      const id = await start();
+      await run('u1', id);
+
+      const results = await Promise.allSettled(
+        Array.from({ length: 6 }, (_, i) => send.execute('u1', id, `m${i}`)),
+      );
+
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      for (const r of results) {
+        if (r.status === 'rejected') {
+          expect(r.reason).toBeInstanceOf(ReplyPendingError);
+        }
+      }
+      expect(await roles(id)).toEqual(['PATIENT', 'THERAPIST']);
+    });
+
+    it('ending the session mid-generation stores no reply and completes the case once', async () => {
+      const id = await start();
+      generator.enqueue(FakePatientReplyGenerator.stallAfter('Par'));
+      const events: { type: string }[] = [];
+      const consumed = (async () => {
+        for await (const e of (await stream.execute('u1', id)).events) {
+          events.push(e);
+        }
+      })();
+      await new Promise((r) => setTimeout(r, 50));
+
+      await end.execute('u1', id);
+      await consumed;
+
+      expect(events.map((e) => e.type)).toEqual(['started', 'delta']);
+      expect(await roles(id)).toEqual([]);
+      expect(registry.isActive(id)).toBe(false);
+      expect(
+        await count('SELECT count(*) FROM case_library.case_completions'),
+      ).toBe(1);
+    });
+
+    it('discarding mid-generation cancels it and stores nothing', async () => {
+      const id = await start();
+      generator.enqueue({
+        steps: [
+          { type: 'wait', ms: 80 },
+          { type: 'remote-session', openaiSessionId: 'remote-late' },
+          { type: 'text', text: 'x' },
+        ],
+      });
+      const abortedBefore = generator.aborted;
+      const consumed = run('u1', id);
+      await new Promise((r) => setTimeout(r, 20));
+
+      await discard.execute('u1', id);
+      await consumed;
+
+      expect(await count('SELECT count(*) FROM chat_simulation.messages')).toBe(
+        0,
+      );
+      expect(registry.isActive(id)).toBe(false);
+      expect(generator.aborted).toBe(abortedBefore + 1);
+    });
+
+    it('a transaction context never outlives a failed unit of work', async () => {
+      const fallback = dataSource.manager;
+      const id = await start();
+
+      await expect(
+        uow.run(async () => {
+          expect(activeManager(fallback)).not.toBe(fallback);
+          await messages.append({
+            id: 'rolled-back',
+            sessionId: id,
+            role: 'PATIENT',
+            text: 'x',
+            createdAt: t0,
+          });
+          throw new Error('boom');
+        }),
+      ).rejects.toThrow('boom');
+
+      expect(activeManager(fallback)).toBe(fallback);
+      expect(await messages.findLast(id)).toBeNull();
+      // A write outside any unit of work goes straight to the pool and sticks.
+      await messages.append({
+        id: 'kept',
+        sessionId: id,
+        role: 'PATIENT',
+        text: 'x',
+        createdAt: t0,
+      });
+      expect((await messages.findLast(id))?.id).toBe('kept');
     });
   });
 });

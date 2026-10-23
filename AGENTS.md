@@ -263,7 +263,8 @@ when touching the area.
 - **Placeholders until later tasks.** `REMOTE_SESSION_REMOVER` is bound to
   `UnconfiguredRemoteSessionRemover` (always fails, so nothing is ever reported deleted; safe
   because no session has an `openai_session_id` before task 07 replaces it). The
-  `SessionGenerationCanceller` is a no-op until task 02 binds its generation registry.
+  `SessionGenerationCanceller` is the in-process `GenerationRegistry` (see "Chat simulation:
+  messages and reply streaming" below).
 
 ## Public endpoints
 
@@ -295,3 +296,35 @@ lowercased address) are all silent; only the stage and error class are logged as
   plan. Don't mistake the silence for a considered access-control decision.
 
 - Never start background work (fire-and-forget promises, event handlers) inside `UnitOfWork.run`: it inherits the ambient transaction (`platform/database/transaction-context.ts`) and would use a released query runner.
+
+## Chat simulation: messages and reply streaming
+
+- `chat-simulation` stores the transcript (`chat_simulation.messages`) and streams the
+  virtual patient's reply as Server-Sent Events. `POST /api/v1/sessions/{id}/messages`
+  stores a therapist message, `GET .../messages` lists them, and
+  `POST .../patient-replies` streams the reply (events `reply.started`, `reply.delta`,
+  `reply.completed`, `error`; `session.ended` is reserved and never sent). Each `data:` is
+  one line of JSON; `: keep-alive` comments go out after 15 s of silence; the response
+  carries `Cache-Control: no-store` and `X-Accel-Buffering: no`.
+- A reply is **pending** when the last stored message is not a `PATIENT` message (an empty
+  session included). A patient message is stored only when the generator completed, the
+  reply is at most 2,500 characters and the session is still `IN_PROGRESS`; failure,
+  time-out (15 s without text), client disconnect and ending or discarding the session
+  store nothing. Errors before the stream starts are ordinary problems; afterwards they
+  are an `error` event carrying the same problem object (`toProblem` in
+  `platform/http/problem-details.ts`).
+- **Single-flight is in process.** `GenerationRegistry` (application layer) allows one
+  generation per session and doubles as the `SessionGenerationCanceller`. It works for
+  ONE instance only: with several instances two replies for the same session could be
+  generated at once. Scaling out needs a shared lock (for example a PostgreSQL advisory
+  lock or a `generating_since` column) first. The stored-reply step re-checks the
+  transcript under the session row lock, so a second reply is still never stored.
+- The reply generator sits behind the `PatientReplyGenerator` port. Tests bind
+  `FakePatientReplyGenerator` (`application/fakes.ts`). The production binding until task
+  07 is `UnconfiguredPatientReplyGenerator`, which fails every reply with
+  `reply-generation-failed` and never fakes content. The application layer, not the
+  adapter, persists `openai_session_id` and `remote_in_sync` (set false before each
+  generation, true only when the reply is stored) and queues a replaced remote session for
+  deletion.
+- Logs carry flow id, session id, event counts and timings only (`patient_reply_stream`),
+  never message text, prompts or provider messages.

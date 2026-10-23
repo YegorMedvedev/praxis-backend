@@ -11,6 +11,9 @@ export const ERROR_CODES = [
   'case-not-found',
   'session-not-found',
   'session-ended',
+  'reply-pending',
+  'no-reply-pending',
+  'reply-generation-failed',
   'invalid-request',
   'rate-limited',
   'service-unavailable',
@@ -79,6 +82,28 @@ export class SessionNotFoundError extends DomainError {
 /** The operation needs an `IN_PROGRESS` session. */
 export class SessionEndedError extends DomainError {
   readonly code = 'session-ended';
+}
+
+/**
+ * A reply is already being generated for the session, or the last therapist
+ * message is still unanswered: the client waits.
+ */
+export class ReplyPendingError extends DomainError {
+  readonly code = 'reply-pending';
+}
+
+/** The last message is already the patient's: the client reconciles. */
+export class NoReplyPendingError extends DomainError {
+  readonly code = 'no-reply-pending';
+}
+
+/**
+ * The patient reply could not be produced (generator failure, blocked output,
+ * time-out, over-long reply). The message is for logs only and must never
+ * carry provider text, prompts or transcript content.
+ */
+export class ReplyGenerationFailedError extends DomainError {
+  readonly code = 'reply-generation-failed';
 }
 
 export class ServiceUnavailableError extends DomainError {

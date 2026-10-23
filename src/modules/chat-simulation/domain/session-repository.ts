@@ -17,6 +17,8 @@ export interface SessionRepository {
     id: string,
     userId: string,
   ): Promise<SessionWithStats | null>;
+  /** Reads an owned session without locking it. */
+  findOwned(id: string, userId: string): Promise<Session | null>;
   /** Reads the session and locks its row until the unit of work ends. */
   lockOwned(id: string, userId: string): Promise<Session | null>;
   /** Persists the mutable state of an existing session. */

@@ -62,6 +62,12 @@ export class TypeOrmSessionRepository implements SessionRepository {
     };
   }
 
+  async findOwned(id: string, userId: string): Promise<Session | null> {
+    if (!isStorableId(id) || !isStorableId(userId)) return null;
+    const row = await this.repo.findOneBy({ id, userId });
+    return row ? SessionMapper.toDomain(row) : null;
+  }
+
   async lockOwned(id: string, userId: string): Promise<Session | null> {
     if (!isStorableId(id) || !isStorableId(userId)) return null;
     const row = await this.repo

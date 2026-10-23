@@ -134,6 +134,15 @@ export class Session {
     return true;
   }
 
+  /** Records the remote conversation this session talks to. */
+  attachRemoteSession(openaiSessionId: string): void {
+    this.props.openaiSessionId = openaiSessionId;
+  }
+
+  markRemoteInSync(inSync: boolean): void {
+    this.props.remoteInSync = inSync;
+  }
+
   snapshot(): SessionProps {
     return { ...this.props };
   }
