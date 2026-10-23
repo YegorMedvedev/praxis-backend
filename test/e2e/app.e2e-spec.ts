@@ -16,6 +16,7 @@ import {
 import type { InProcessBackgroundRunner } from '../../src/modules/auth/infrastructure/in-process-background-runner';
 import { RateLimiter } from '../../src/platform/http/rate-limiter';
 import { CreateUsersProfiles1760000000000 } from '../../src/platform/database/migrations/1760000000000-CreateUsersProfiles';
+import { AddCaseTranslationAgentId1760000002000 } from '../../src/platform/database/migrations/1760000002000-AddCaseTranslationAgentId';
 import { CreateCaseLibrary1760000001000 } from '../../src/platform/database/migrations/1760000001000-CreateCaseLibrary';
 import {
   applyTrustProxy,
@@ -82,6 +83,7 @@ describe('Application (e2e)', () => {
     process.env.CORS_ALLOWED_ORIGINS = 'https://app.example.test';
     process.env.APP_BASE_URL = APP_BASE_URL;
     process.env.RESEND_API_KEY = RESEND_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-e2e-fake-key-do-not-leak';
     process.env.PASSWORD_RESET_EMAIL_FROM = 'no-reply@mail.example.test';
     // Generous here; the 429 test builds its own app with a small limiter.
     process.env.PASSWORD_RESET_RATE_LIMIT = '1000';
@@ -93,6 +95,7 @@ describe('Application (e2e)', () => {
       migrations: [
         CreateUsersProfiles1760000000000,
         CreateCaseLibrary1760000001000,
+        AddCaseTranslationAgentId1760000002000,
       ],
     }).initialize();
     await migrator.runMigrations();

@@ -225,6 +225,116 @@ when touching the area.
   HTTP write endpoint. `GET /api/v1/me/case-progress` is the read side.
 - Content is loaded by `pnpm seed:cases` (idempotent upsert, never auto-run, never deletes).
   The shipped seed is placeholder content only.
+- Each case translation may carry a server-only patient `agent_id` (one OpenAI agent per
+  case and language). Other modules look it up with `ResolvePatientAgent` from
+  `case-library.public-api.ts` (`{ caseId, language }` -> `{ agentId } | null`; null for
+  unknown, hidden or unconfigured). It is never in `Case`/`LocalizedCase`, any response or
+  any log. The seed takes it as `agentIds?: { en?, ru? }` per case, validated up front
+  (non-blank, <= 128 chars, no whitespace/control characters); an omitted id leaves the
+  stored one untouched. The shipped seed has none.
+
+## Chat simulation
+
+- `chat-simulation` owns practice sessions (schema `chat_simulation`: `sessions`, `messages`,
+  `agent_session_deletions`). No foreign keys to other schemas; user and case ids are plain
+  columns. `GET/POST /api/v1/sessions`, `GET/PATCH/DELETE /api/v1/sessions/{session_id}`.
+  Session ids are opaque; another user's session is `session-not-found` (404), never 403, and
+  `DELETE` answers 204 whether or not the session existed.
+- One session per (user, case): creating a session discards every other one for that case in the
+  same transaction (advisory lock plus a unique index). Ending marks the case completed through
+  `RecordCaseCompletion` (case-library public API) **in the same transaction**.
+- **Cross-module atomicity.** Modules do not pass transactions around. `UnitOfWork`
+  (domain port) is adapted by `TypeOrmUnitOfWork`, which opens a transaction via
+  `platform/database/transaction-context.ts` (`AsyncLocalStorage`). Any TypeORM repository that
+  wraps itself in `activeRepository(...)` joins the ambient transaction; case-library's
+  completion repository does. Outside a unit of work they behave as before. New repositories that
+  must be atomic with a session change need the same one-line wrap.
+- The patient cannot end a session in this milestone: `ENDED_BY_PATIENT` exists in the contract
+  and domain (a restored session in that state answers `session-ended` to `PATCH`) but nothing
+  produces it.
+- Server-side attributes `agent_id`, `openai_session_id`, `remote_in_sync` are never serialised
+  or logged. Request logs carry the route template only (no ids, no bodies).
+- **Remote cleanup.** Discarding a session (DELETE, replacement) enqueues its
+  `openai_session_id` in `agent_session_deletions` in the same commit. `SessionDeletionWorker`
+  (in-process, 30 s interval, single-instance, not started when `NODE_ENV=test`) calls
+  `ProcessSessionDeletions`, which deletes via the `RemoteSessionRemover` port and retries with
+  exponential backoff (30 s doubling, cap 1 h). It is idempotent and never blocks or fails
+  session removal.
+- `REMOTE_SESSION_REMOVER` is `OpenAiRemoteSessionRemover` (see "OpenAI configuration").
+  The `SessionGenerationCanceller` is the in-process `GenerationRegistry` (see "Chat
+  simulation: messages and reply streaming" below).
+
+## OpenAI configuration
+
+- The patient is a saved OpenAI **Agents API** agent (instructions only, no tools), one per
+  case and language (agent ids live in case-library seed data). All OpenAI code lives in
+  `chat-simulation/infrastructure/remote/` behind the `PatientReplyGenerator` and
+  `RemoteSessionRemover` ports; dependency-cruiser rule 9 fails `pnpm test:arch` if any
+  other file imports `openai`. The adapters depend on the small `OpenAiAgentsClient`
+  interface; `sdk-openai-agents-client.ts` is its only implementation over the SDK.
+- `OPENAI_API_KEY` is required at boot and secret (no default, never logged). Unit,
+  integration and e2e tests use a dummy value and fakes, and never reach OpenAI. No other
+  OpenAI variables exist: timeouts belong to the application layer and SDK retries are
+  off (a retry could duplicate input; "Try again" is the client's decision).
+- The installed `openai` SDK (see `package.json`) selects the saved agent with `agent_id`
+  (its `agent` object carries per-session overrides only and has no `id`); no overrides are
+  sent. The session is created with `environment: { type: 'none' }`. Follow-ups use
+  `sessions.stream()`, which subscribes to events before sending the input with an
+  idempotency key derived from the therapist message id.
+- The adapter yields `remote-session` before the first text of a new remote session and
+  honours the abort signal (closes the stream, best-effort `agent.session.input.cancel`);
+  persistence of `openai_session_id` / `remote_in_sync` stays in the application layer. The
+  remote session is a cache: when it is missing or out of sync, a new one is created and the
+  stored transcript is replayed (`formatTranscriptForReplay`).
+- `placeholder-prompts.ts` holds the PLACEHOLDER opening input and replay wording; the
+  product owner must approve them (HUMAN-REQUIRED).
+- Logs carry session id, event type counts, durations, time to first delta, HTTP status,
+  OpenAI request id and error class only. A 401/403 from OpenAI also logs
+  `openai_auth_failed`; alert on it and on `reply_generation_failed`.
+- The SDK client is built with a fixed base URL, no organization/project and `logLevel:
+  'off'`, so stray `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID` or `OPENAI_LOG`
+  variables can neither redirect the key and transcripts nor enable request-body logging.
+- Known gaps: a new remote session that is aborted or fails before its first event carrying a
+  session id is never tracked, so it is not queued for deletion (only provider expiry removes
+  it). Delta events carry no subagent flag; the adapter learns subagent turn ids from
+  `turn.*` events (the agents have no subagents, so this is defensive). A text/delta mismatch
+  is detected only at `turn.completed`, after the deltas were already streamed; the stream
+  then ends in an error and the client must treat the reply as failed.
+- Accepted trade-offs: OpenAI retains session state (no zero data retention), US-only
+  residency, remote deletion is asynchronous, and single-flight is per instance.
+- `pnpm test:agents` is an opt-in smoke test against the real API (never in `test:all` or CI,
+  never run by automation). It needs `OPENAI_API_KEY`, `SMOKE_AGENT_ID_EN` and/or
+  `SMOKE_AGENT_ID_RU`; each language is skipped without its id. It makes billable calls,
+  deletes the remote sessions it creates and prints no reply text.
+
+## Chat simulation: retention and privacy
+
+- **90-day retention.** Every session is deleted with its messages once `created_at + 90 days`
+  has passed, in any status (the clock starts at creation). Case completion is untouched.
+  `PurgeExpiredSessions` (application) deletes in batches of 200 (at most 500 per pass) with
+  `FOR UPDATE SKIP LOCKED` and enqueues each `openai_session_id` in `agent_session_deletions` in
+  the SAME transaction as the delete; a failing batch rolls back whole. Idempotent and safe to
+  run twice. `RetentionWorker` (in-process, single instance, not started when `NODE_ENV=test`,
+  never overlaps passes) runs 10 s after boot and then every 6 hours; it logs counts only
+  (`retention_purge`, `retention_purge_failed` with the error class).
+- **NFR-1 (nothing older than 90 d + 24 h).** A session is removed by the first pass after its
+  90th day, so the worst case is one interval plus the pass duration (about 6 h), well inside 24 h.
+  The startup pass means restarts do not postpone enforcement. Defence in depth: `GET`, `PATCH`,
+  `GET/POST .../messages` and `.../patient-replies` already answer `session-not-found` for a
+  session older than 90 days (`Session.isExpired`), even before the job has deleted it.
+- **Runbook and audit:** `docs/runbooks/chat-simulation-erasure.md` (manual erasure of one user,
+  retention audit, backups, transcript access). The SQL lives next to it and is run by
+  integration tests. Nobody sees a stopped or failing job unless the audit query or an alert on
+  `retention_purge_failed` / `remote_session_deletions_failed` / `reply_generation_failed` exists.
+- No tooling exposes transcript text (FR-11) and the API has no transcript export; only
+  `GET /api/v1/sessions/{session_id}/messages` returns message text, to its owner (e2e-tested).
+  The learner's own messages follow the same rules as the patient's, and a distress message is
+  handled like any other (no detection, no flag; tested).
+- Logs never contain message text, prompts, provider messages or remote ids (e2e marker scan over
+  create, message, stream, failure, end, discard, retention and cleanup, in both languages).
+- Operational limits: both workers are per instance (run them on one instance only); backups
+  must expire within 30 days (a deployment decision, see HUMAN-REQUIRED); a remote session
+  whose id was never stored cannot be found and is only removed by OpenAI's own expiry.
 
 ## Public endpoints
 
@@ -254,3 +364,36 @@ lowercased address) are all silent; only the stage and error class are logged as
 - `GET /api/v1/users/:id` is currently unauthenticated and returns full user details
   (including email) by design — no guard was specified for this endpoint in the original
   plan. Don't mistake the silence for a considered access-control decision.
+
+- Never start background work (fire-and-forget promises, event handlers) inside `UnitOfWork.run`: it inherits the ambient transaction (`platform/database/transaction-context.ts`) and would use a released query runner.
+
+## Chat simulation: messages and reply streaming
+
+- `chat-simulation` stores the transcript (`chat_simulation.messages`) and streams the
+  virtual patient's reply as Server-Sent Events. `POST /api/v1/sessions/{id}/messages`
+  stores a therapist message, `GET .../messages` lists them, and
+  `POST .../patient-replies` streams the reply (events `reply.started`, `reply.delta`,
+  `reply.completed`, `error`; `session.ended` is reserved and never sent). Each `data:` is
+  one line of JSON; `: keep-alive` comments go out after 15 s of silence; the response
+  carries `Cache-Control: no-store` and `X-Accel-Buffering: no`.
+- A reply is **pending** when the last stored message is not a `PATIENT` message (an empty
+  session included). A patient message is stored only when the generator completed, the
+  reply is at most 2,500 characters and the session is still `IN_PROGRESS`; failure,
+  time-out (15 s without text), client disconnect and ending or discarding the session
+  store nothing. Errors before the stream starts are ordinary problems; afterwards they
+  are an `error` event carrying the same problem object (`toProblem` in
+  `platform/http/problem-details.ts`).
+- **Single-flight is in process.** `GenerationRegistry` (application layer) allows one
+  generation per session and doubles as the `SessionGenerationCanceller`. It works for
+  ONE instance only: with several instances two replies for the same session could be
+  generated at once. Scaling out needs a shared lock (for example a PostgreSQL advisory
+  lock or a `generating_since` column) first. The stored-reply step re-checks the
+  transcript under the session row lock, so a second reply is still never stored.
+- The reply generator sits behind the `PatientReplyGenerator` port. Tests bind
+  `FakePatientReplyGenerator` (`application/fakes.ts`). The production binding is
+  `OpenAiPatientReplyGenerator` (see "OpenAI configuration"). The application layer, not the
+  adapter, persists `openai_session_id` and `remote_in_sync` (set false before each
+  generation, true only when the reply is stored) and queues a replaced remote session for
+  deletion.
+- Logs carry flow id, session id, event counts and timings only (`patient_reply_stream`),
+  never message text, prompts or provider messages.

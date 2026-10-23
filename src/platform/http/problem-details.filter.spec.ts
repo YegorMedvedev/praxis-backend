@@ -16,6 +16,11 @@ import {
   ProfileNotFoundError,
   RateLimitedError,
   ServiceUnavailableError,
+  NoReplyPendingError,
+  ReplyGenerationFailedError,
+  ReplyPendingError,
+  SessionEndedError,
+  SessionNotFoundError,
   TokenExpiredError,
   UnauthenticatedError,
   ValidationFailedError,
@@ -59,8 +64,8 @@ function run(exception: unknown, options: RunOptions = {}) {
 
   return {
     status: response.status.mock.calls[0][0] as number,
-    contentType: response.type.mock.calls[0][0] as string,
-    body: response.send.mock.calls[0][0] as Record<string, unknown>,
+    contentType: response.type.mock.calls[0]?.[0] as string,
+    body: response.send.mock.calls[0]?.[0] as Record<string, unknown>,
     headers,
   };
 }
@@ -94,6 +99,11 @@ describe('ProblemDetailsFilter', () => {
     [new AccountDisabledError('disabled'), 403, 'account-disabled'],
     [new ProfileNotFoundError('none'), 404, 'profile-not-found'],
     [new CaseNotFoundError('none'), 404, 'case-not-found'],
+    [new SessionNotFoundError('none'), 404, 'session-not-found'],
+    [new SessionEndedError('ended'), 409, 'session-ended'],
+    [new ReplyPendingError('pending'), 409, 'reply-pending'],
+    [new NoReplyPendingError('none'), 409, 'no-reply-pending'],
+    [new ReplyGenerationFailedError('x'), 502, 'reply-generation-failed'],
     [new InvalidRequestError('bad'), 400, 'invalid-request'],
     [new ServiceUnavailableError('down'), 503, 'service-unavailable'],
     [new NotFoundException(), 404, 'not-found'],
@@ -163,6 +173,21 @@ describe('ProblemDetailsFilter', () => {
       expect(caseId.status).toBe(404);
       expect(caseId.body.type).toBe('/problems/case-not-found');
       expect(run(error, { url: '/api/v1/users/%E0%A4%A' }).status).toBe(400);
+    });
+
+    it('maps an undecodable session id to session-not-found, and DELETE to 204', () => {
+      const error = new BadRequestException(
+        "Failed to decode param '%E0%A4%A'",
+      );
+      const url = '/api/v1/sessions/%E0%A4%A';
+      for (const method of ['GET', 'PATCH']) {
+        const found = run(error, { url, method });
+        expect(found.status).toBe(404);
+        expect(found.body.type).toBe('/problems/session-not-found');
+      }
+      const deleted = run(error, { url, method: 'DELETE' });
+      expect(deleted.status).toBe(204);
+      expect(deleted.headers['Cache-Control']).toBe('no-store');
     });
 
     it('turns a 404 into 405 with Allow when the path has other methods', () => {

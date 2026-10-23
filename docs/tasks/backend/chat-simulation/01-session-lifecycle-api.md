@@ -2,11 +2,13 @@
 
 - **Milestone:** Chat simulation
 - **Screens covered:** Chat, Chat session (options sheet), Chat patient ended (lifecycle only; UI is in 03)
-- **Depends on:** backend/signup-login/06 (authenticated API foundation: bearer auth, problem format, `X-Flow-ID`, rate limiting)
+- **Depends on:** backend/signup-login/06 (authenticated API foundation: bearer auth, problem format, `X-Flow-ID`, rate limiting); backend/chat-simulation/06 (case-to-agent mapping, used to reject cases that have no patient agent)
 - **Type:** BE
 
+> **Scope change (see `_shared/conventions.md` "Chat simulation: OpenAI Agents API"):** the patient is played by an OpenAI agent that has no tools, so **the patient cannot end a session in this milestone**. `ENDED_BY_PATIENT` stays in the `Session` contract so clients and later milestones do not break, but nothing in this milestone produces it. FR-5, AC-8 and the `session.ended` stream event are **deferred**, not deleted; do not implement them and do not remove the enum value.
+
 ## Description
-Defines the **session** resource: one practice conversation between one learner and the virtual patient of one case, in one language. The API creates a session, returns it, ends it (by the therapist), discards it (leave or restart), and records when the patient ends it (signalled through the stream in 02). A session is **not resumable after an app restart**: the app keeps the session id in memory only. When a session ends, the case becomes **completed** for the learner, server-side. The session-summary and feedback milestones rely on the `Session` shape and `stats` defined here.
+Defines the **session** resource: one practice conversation between one learner and the virtual patient of one case, in one language. The API creates a session, returns it, ends it (by the therapist), and discards it (leave or restart). The patient ending a session (signalled through the stream in 02) is deferred (see the scope change above). A session is **not resumable after an app restart**: the app keeps the session id in memory only. When a session ends, the case becomes **completed** for the learner, server-side. The session-summary and feedback milestones rely on the `Session` shape and `stats` defined here.
 
 ## Scope
 **In scope:** `Session` resource, states and transitions, create / get / end / discard, one-session-per-case rule, completion side effect, transcript retention hooks (rules in 05).
@@ -28,13 +30,16 @@ All endpoints: `Authorization: Bearer <Firebase ID token>`, `X-Flow-ID` per sign
 
 `GET /sessions/{id}` is the **single source of summary data** (there is no separate summary endpoint; see session-feedback/01). For an ended session all `stats` fields are non-null (`patient_message_count` includes the patient's closing message) and the body is identical on repeated calls. Counts include stored (completed) messages only.
 
-State transitions: `IN_PROGRESS -> ENDED_BY_THERAPIST` (PATCH below), `IN_PROGRESS -> ENDED_BY_PATIENT` (stream event `session.ended`, see 02). Ended states are terminal. Discard removes the session (it is not a state).
+The `Session` JSON never exposes the OpenAI session id or the agent id; they are server-side attributes (see "Server-side state" below).
+
+State transitions: `IN_PROGRESS -> ENDED_BY_THERAPIST` (PATCH below). `IN_PROGRESS -> ENDED_BY_PATIENT` is **deferred** (stream event `session.ended`, see 02); model it in the domain as a legal transition only if that costs nothing, but expose no way to trigger it. Ended states are terminal. Discard removes the session (it is not a state).
 
 ### `POST /sessions`
 Creates a session for a case and discards every other session of this user for the same case, in any status (FR-3).
 - Request (`application/json`): `case_id` (string, required), `language` (`en` \| `ru`, required). Unknown properties are ignored.
 - 201 + `Location: /sessions/{id}`, body `Session` (`status: IN_PROGRESS`, no messages yet; the patient's opening message is fetched through the stream in 02).
-- Errors: 400 `invalid-request` (`REQUIRED`, `INVALID_TYPE`, `INVALID_VALUE`); 401; 403 `account-disabled`; 404 `case-not-found` (owned by case-library/02); 429; 5xx.
+- Errors: 400 `invalid-request` (`REQUIRED`, `INVALID_TYPE`, `INVALID_VALUE`); 401; 403 `account-disabled`; 404 `case-not-found` (owned by case-library/02; also returned when the case is hidden or has **no patient agent for the requested language**, resolved through chat-simulation/06, so that a case cannot be practised without an agent); 429; 5xx.
+- The session stores the resolved agent id at creation (see "Server-side state"); a later change of the mapping does not affect running sessions.
 
 ### `GET /sessions/{session_id}`
 - 200 `Session`. Errors: 401; 404 `session-not-found` (unknown, not owned, discarded or deleted); 429; 5xx.
@@ -48,7 +53,11 @@ Ends the session as the therapist. Idempotent.
 ### `DELETE /sessions/{session_id}`
 Discards the session and its transcript (leave screen, restart). Idempotent.
 - 204 when deleted; 204 also when it no longer exists or belongs to another user. Works for any status. Does **not** undo case completion (FR-6).
+- The remote OpenAI session (if one was created) is deleted too, asynchronously and durably (FR-10).
 - Errors: 401; 429; 5xx.
+
+### Server-side state (not part of any response)
+Besides the fields above a session row stores `agent_id` (resolved at creation, never changed) and `openai_session_id` (nullable; set when the first reply is requested, see chat-simulation/07). Neither is ever returned by an endpoint or written to logs.
 
 ### Problem types owned by this feature
 | `type` | Status | Meaning | Client i18n key |
@@ -61,11 +70,13 @@ Discards the session and its transcript (leave screen, restart). Idempotent.
 - FR-2: The system shall expose the states `IN_PROGRESS`, `ENDED_BY_THERAPIST`, `ENDED_BY_PATIENT` only; an ended session shall never return to `IN_PROGRESS`.
 - FR-3: When a session is created, the system shall discard every other session of the same user and case, in any status, including ended ones, even if feedback was not sent (product-owner decision). Case completion is unaffected (FR-6).
 - FR-4: The system shall end a session on `PATCH` with `ENDED_BY_THERAPIST`, set `ended_at`, and, if a patient reply is being generated, cancel it and not store any partial reply (see 02). `PATCH` is idempotent for an already `ENDED_BY_THERAPIST` session and answers 409 `session-ended` for an `ENDED_BY_PATIENT` session.
-- FR-5: The system shall move a session to `ENDED_BY_PATIENT` in the same operation that commits the patient's closing message (02), setting `ended_at` to that commit time, before the stream delivers `reply.completed` and `session.ended`; so a client that reads the session after any stream failure sees the ended state.
+- FR-5 (**DEFERRED**, do not implement in this milestone; see the scope change): The system shall move a session to `ENDED_BY_PATIENT` in the same operation that commits the patient's closing message (02), setting `ended_at` to that commit time, before the stream delivers `reply.completed` and `session.ended`; so a client that reads the session after any stream failure sees the ended state.
 - FR-6: The system shall mark the case completed for the user atomically with the move of a session to `ENDED_BY_THERAPIST` or `ENDED_BY_PATIENT`, without any client call; the mark is idempotent and survives discard of the session and deletion of the transcript (05). It shall not be set when an `IN_PROGRESS` session is discarded.
 - FR-7: The system shall return `stats` on every `Session`, with message counts equal to the number of stored messages per role and `duration_seconds` per the table.
 - FR-8: The system shall make `DELETE` remove the session so that it and its messages are no longer retrievable through any endpoint after the response, including ended sessions (`GET /sessions/{id}`, the summary data and feedback then return 404 `session-not-found`, session-feedback/01 FR-4).
 - FR-9: The system shall report sessions of other users as `session-not-found`, never as 403, and shall reject creating a session when the user's account is disabled (`account-disabled`).
+- FR-10: When a session is discarded (`DELETE`, restart, a new session for the same case) the system shall, in the same database transaction that removes the session, record the session's `openai_session_id` (when set) in a durable cleanup queue (`chat_simulation.agent_session_deletions`), and a background worker shall delete the remote OpenAI session and retry failures with backoff until it succeeds or the id is reported as already gone. Session removal never waits for, or fails because of, OpenAI. The retention job (05) uses the same queue.
+- FR-11: The system shall refuse to create a session (404 `case-not-found`) when no patient agent is configured for the case and language (chat-simulation/06).
 
 ## Non-functional requirements
 - NFR-1: Logs include `flow_id`, method, route template, status, latency, session id; never message text, names or emails.
@@ -77,16 +88,19 @@ Discards the session and its transcript (leave screen, restart). Idempotent.
 - AC-2: Given an unknown `case_id`, When `POST /sessions`, Then 404 `case-not-found`; given `language:"de"`, Then 400 with `invalid_params` `language` `INVALID_VALUE` (FR-1).
 - AC-3: Given a session A for case X in any status (including ended), When a new session B is created for X, Then B is `IN_PROGRESS`, `GET` of A returns 404 `session-not-found`, and the case stays completed if A had ended (FR-3, FR-6).
 - AC-4: Given an `IN_PROGRESS` session, When `PATCH {status:"ENDED_BY_THERAPIST"}`, Then 200 with that status, `ended_at` set, `stats.ended_by: THERAPIST`, `duration_seconds` an integer, and the case is completed for the user (FR-2, FR-4, FR-6).
-- AC-5: Given an `ENDED_BY_THERAPIST` session, When the same PATCH is repeated, Then 200 with an identical body; given an `ENDED_BY_PATIENT` session, Then 409 `session-ended` (FR-4).
+- AC-5: Given an `ENDED_BY_THERAPIST` session, When the same PATCH is repeated, Then 200 with an identical body (FR-4). (The `ENDED_BY_PATIENT` -> 409 `session-ended` clause is deferred with FR-5; cover it by a unit test on a session restored in that state if the domain supports it.)
 - AC-6: Given `PATCH {status:"IN_PROGRESS"}` or `{status:"ENDED_BY_PATIENT"}`, When sent, Then 400 `invalid-request` (FR-2).
 - AC-7: Given a patient reply is being streamed, When PATCH ends the session, Then the stream terminates, no partial patient message is stored, and `patient_message_count` excludes it (FR-4, FR-7; with 02).
-- AC-8: Given the patient ended the session (02 `session.ended`), When `GET /sessions/{id}`, Then `status: ENDED_BY_PATIENT`, `stats.ended_by: PATIENT`, `ended_at` is the closing-message commit time, `patient_message_count` includes it, and the case is completed, even while the stream is still delivering (FR-5, FR-6).
+- AC-8 (**DEFERRED**): Given the patient ended the session (02 `session.ended`), When `GET /sessions/{id}`, Then `status: ENDED_BY_PATIENT`, `stats.ended_by: PATIENT`, `ended_at` is the closing-message commit time, `patient_message_count` includes it, and the case is completed, even while the stream is still delivering (FR-5, FR-6).
 - AC-9: Given an `IN_PROGRESS` session, When it is deleted, Then 204, GET returns 404, and the case is not completed; given an ended session whose case is completed, Then the case stays completed (FR-6, FR-8).
 - AC-10: Given a repeated DELETE, a DELETE of a foreign id, or a GET/PATCH of another user's id, Then DELETE returns 204 with no information about existence and GET/PATCH return 404 `session-not-found` (FR-8, FR-9).
 - AC-11: Given a session with 3 therapist and 3 patient messages ended after 125.7 s, When GET, Then counts are 3 and 3 and `duration_seconds` is 125; repeated GETs of an ended session return identical bodies (FR-7).
 - AC-12: Given a disabled account, When `POST /sessions`, Then 403 `account-disabled` (FR-9).
 - AC-13: Given a session end is committed, When the case is read in the same instant (including under concurrent ends and an injected failure between the two writes), Then no ended session exists whose case is not completed (NFR-2).
 - AC-14: Given any request, When logs are inspected, Then no message text appears and a `flow_id` is present (NFR-1).
+- AC-15: Given a case whose translation for the requested language has no agent id, When `POST /sessions`, Then 404 `case-not-found` and no session row exists (FR-11).
+- AC-16: Given a session with an `openai_session_id`, When it is deleted or replaced, Then the session row is gone, a queue row exists in the same commit, and a worker run with a fake OpenAI client deletes the remote session; given the fake fails twice, Then it is retried and the queue row is removed only after success (FR-10).
+- AC-17: Given any `Session` response, When the body is inspected, Then it contains neither `agent_id` nor `openai_session_id` (Server-side state).
 
 ## Open questions
 - None.

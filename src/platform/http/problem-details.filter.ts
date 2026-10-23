@@ -14,6 +14,7 @@ import {
   DomainError,
   InvalidRequestError,
   RateLimitedError,
+  SessionNotFoundError,
 } from '../../shared/domain-error';
 import { FLOW_ID_HEADER, flowIdOf } from './flow-id';
 import {
@@ -56,6 +57,8 @@ const UNMAPPED_4XX_DETAIL = 'The request could not be processed.';
 // The router fails before guards and the method check, so such a path is a
 // 404 even when unauthenticated.
 const OPAQUE_ID_PATH = /^\/api\/v\d+\/cases\/[^/]+\/?$/i;
+
+const OPAQUE_SESSION_PATH = /^\/api\/v\d+\/sessions\/[^/]+\/?$/i;
 
 function isUndecodablePath(exception: unknown): boolean {
   // Nest turns the router's URIError into a BadRequestException that keeps
@@ -100,6 +103,20 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     const response = http.getResponse<Response>();
 
     const flowId = flowIdOf(response) ?? randomUUID();
+
+    // DELETE of a session is idempotent and reveals nothing: an id that cannot
+    // even be decoded is one that does not exist, so it is a plain 204.
+    if (
+      request.method === 'DELETE' &&
+      isUndecodablePath(exception) &&
+      OPAQUE_SESSION_PATH.test(request.originalUrl.split('?')[0])
+    ) {
+      response.setHeader(FLOW_ID_HEADER, flowId);
+      response.setHeader('Cache-Control', 'no-store');
+      response.status(204).send();
+      return;
+    }
+
     const { problem, headers } = this.resolve(exception, request);
 
     response.setHeader(FLOW_ID_HEADER, flowId);
@@ -120,6 +137,11 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
     if (isUndecodablePath(exception) && OPAQUE_ID_PATH.test(instance)) {
       exception = new CaseNotFoundError('case not found');
+    } else if (
+      isUndecodablePath(exception) &&
+      OPAQUE_SESSION_PATH.test(instance)
+    ) {
+      exception = new SessionNotFoundError('session not found');
     }
 
     if (exception instanceof DomainError) {

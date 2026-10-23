@@ -5,6 +5,7 @@ import { DatabaseModule } from './platform/database/database.module';
 import { EventsModule } from './platform/events/events.module';
 import { HttpPlatformModule } from './platform/http/http.module';
 import { AuthModule as AuthFeatureModule } from './modules/auth/auth.public-api';
+import { ChatSimulationModule } from './modules/chat-simulation/chat-simulation.public-api';
 import { CaseLibraryModule } from './modules/case-library/case-library.public-api';
 import { UsersModule } from './modules/users/users.public-api';
 import { SystemModule } from './platform/system/system.module';
@@ -21,6 +22,7 @@ import { SystemModule } from './platform/system/system.module';
     UsersModule,
     AuthFeatureModule,
     CaseLibraryModule,
+    ChatSimulationModule,
   ],
 })
 export class AppModule {}

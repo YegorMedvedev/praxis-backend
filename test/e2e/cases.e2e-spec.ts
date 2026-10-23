@@ -10,6 +10,7 @@ import { DataSource } from 'typeorm';
 import type { RecordCaseCompletion as RecordCaseCompletionType } from '../../src/modules/case-library/case-library.public-api';
 import type { SeedCase } from '../../src/modules/case-library/infrastructure/seed/case-seed.data';
 import { seedCases } from '../../src/modules/case-library/infrastructure/seed/case-seeder';
+import { AddCaseTranslationAgentId1760000002000 } from '../../src/platform/database/migrations/1760000002000-AddCaseTranslationAgentId';
 import { CreateCaseLibrary1760000001000 } from '../../src/platform/database/migrations/1760000001000-CreateCaseLibrary';
 import { CreateUsersProfiles1760000000000 } from '../../src/platform/database/migrations/1760000000000-CreateUsersProfiles';
 import { configureApp } from '../../src/platform/http/configure-app';
@@ -91,6 +92,7 @@ describe('GET /cases and /cases/:case_id (e2e)', () => {
     process.env.CORS_ALLOWED_ORIGINS = 'https://app.example.test';
     process.env.APP_BASE_URL = 'http://app.example.test';
     process.env.RESEND_API_KEY = 're_e2e_fake_key_do_not_leak';
+    process.env.OPENAI_API_KEY = 'sk-e2e-fake-key-do-not-leak';
     process.env.PASSWORD_RESET_EMAIL_FROM = 'no-reply@mail.example.test';
 
     const migrator = await new DataSource({
@@ -99,6 +101,7 @@ describe('GET /cases and /cases/:case_id (e2e)', () => {
       migrations: [
         CreateUsersProfiles1760000000000,
         CreateCaseLibrary1760000001000,
+        AddCaseTranslationAgentId1760000002000,
       ],
     }).initialize();
     await migrator.runMigrations();
@@ -384,6 +387,28 @@ describe('GET /cases and /cases/:case_id (e2e)', () => {
       expect(logged).not.toMatch(
         /Fictional|Title case|Teaser|Scenario|Note case/,
       );
+    });
+
+    it('never exposes a patient agent id, in either language', async () => {
+      await seedCases(manager(), [
+        {
+          ...seedCase('case-agent', ['en', 'ru']),
+          agentIds: { en: 'agent-secret-en-1', ru: 'agent-secret-ru-2' },
+        },
+      ]);
+      const { idToken } = await newUser();
+      for (const language of ['en', 'ru']) {
+        const bodies = [
+          await get(CASES, idToken, language).expect(200),
+          await get(`${CASES}/case-agent`, idToken, language).expect(200),
+        ];
+        for (const response of bodies) {
+          const text = JSON.stringify(response.body);
+          expect(text).not.toContain('agent_id');
+          expect(text).not.toContain('agentId');
+          expect(text).not.toContain('agent-secret');
+        }
+      }
     });
   });
 });

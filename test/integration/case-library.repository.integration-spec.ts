@@ -15,6 +15,8 @@ import {
   type SeedCase,
 } from '../../src/modules/case-library/infrastructure/seed/case-seed.data';
 import { seedCases } from '../../src/modules/case-library/infrastructure/seed/case-seeder';
+import { TypeOrmPatientAgentDirectory } from '../../src/modules/case-library/infrastructure/persistence/typeorm-patient-agent-directory';
+import { AddCaseTranslationAgentId1760000002000 } from '../../src/platform/database/migrations/1760000002000-AddCaseTranslationAgentId';
 import { CreateCaseLibrary1760000001000 } from '../../src/platform/database/migrations/1760000001000-CreateCaseLibrary';
 
 const content = (title: string, contentNote: string | null = null) => ({
@@ -57,7 +59,10 @@ describe('Case library repositories and migration (integration)', () => {
         CaseTranslationOrmEntity,
         CaseCompletionOrmEntity,
       ],
-      migrations: [CreateCaseLibrary1760000001000],
+      migrations: [
+        CreateCaseLibrary1760000001000,
+        AddCaseTranslationAgentId1760000002000,
+      ],
       synchronize: false,
     }).initialize();
     await dataSource.runMigrations();
@@ -287,7 +292,138 @@ describe('Case library repositories and migration (integration)', () => {
     });
   });
 
+  describe('patient agent mapping', () => {
+    let directory: TypeOrmPatientAgentDirectory;
+    const stored = async (id: string) =>
+      dataSource.query(
+        `SELECT language, agent_id FROM case_library.case_translations WHERE case_id = $1 ORDER BY language`,
+        [id],
+      );
+
+    beforeAll(() => {
+      directory = new TypeOrmPatientAgentDirectory(
+        dataSource.getRepository(CaseTranslationOrmEntity),
+      );
+    });
+
+    it('migrates down and up leaving existing rows intact with null ids', async () => {
+      await dataSource.undoLastMigration();
+      // Rows written before the migration, with the pre-migration column set.
+      await dataSource.query(
+        `INSERT INTO case_library.cases (id, position, level, category, avatar, patient_age)
+         VALUES ('old', 0, 'EASY', 'SUBSTANCE_USE', 'HAIR_UP', 30)`,
+      );
+      for (const language of ['en', 'ru']) {
+        await dataSource.query(
+          `INSERT INTO case_library.case_translations (case_id, language, title, teaser, scenario, patient_name)
+           VALUES ('old', $1, 't', 't', 's', 'p')`,
+          [language],
+        );
+      }
+      await dataSource.runMigrations();
+      expect(await stored('old')).toEqual([
+        { language: 'en', agent_id: null },
+        { language: 'ru', agent_id: null },
+      ]);
+      expect((await catalog.findVisibleById('old'))?.id).toBe('old');
+
+      await dataSource.undoLastMigration();
+      const columns = await dataSource.query(
+        `SELECT 1 FROM information_schema.columns WHERE table_schema = 'case_library' AND table_name = 'case_translations' AND column_name = 'agent_id'`,
+      );
+      expect(columns).toEqual([]);
+      expect(
+        await count(
+          'SELECT count(*)::int AS count FROM case_library.case_translations',
+        ),
+      ).toBe(2);
+      await dataSource.runMigrations();
+    });
+
+    it('seeds ids idempotently, keeps them when the seed omits them', async () => {
+      const withIds = {
+        ...fixture('m', ['en', 'ru']),
+        agentIds: { en: 'agent_a', ru: 'agent_b' },
+      };
+      await seedCases(dataSource.manager, [withIds]);
+      await seedCases(dataSource.manager, [withIds]);
+      expect(await stored('m')).toEqual([
+        { language: 'en', agent_id: 'agent_a' },
+        { language: 'ru', agent_id: 'agent_b' },
+      ]);
+
+      await seedCases(dataSource.manager, [fixture('m', ['en', 'ru'])]);
+      expect(await stored('m')).toEqual([
+        { language: 'en', agent_id: 'agent_a' },
+        { language: 'ru', agent_id: 'agent_b' },
+      ]);
+
+      await seedCases(dataSource.manager, [
+        { ...fixture('m', ['en', 'ru']), agentIds: { ru: 'agent_c' } },
+      ]);
+      expect(await stored('m')).toEqual([
+        { language: 'en', agent_id: 'agent_a' },
+        { language: 'ru', agent_id: 'agent_c' },
+      ]);
+    });
+
+    it('leaves the database untouched when an id is invalid', async () => {
+      await expect(
+        seedCases(dataSource.manager, [
+          fixture('good', ['en', 'ru']),
+          { ...fixture('bad', ['en', 'ru']), agentIds: { en: 'a b' } },
+        ]),
+      ).rejects.toThrow('"bad"');
+      expect(
+        await count('SELECT count(*)::int AS count FROM case_library.cases'),
+      ).toBe(0);
+    });
+
+    it('resolves different ids per language for a visible case', async () => {
+      await seedCases(dataSource.manager, [
+        {
+          ...fixture('v', ['en', 'ru']),
+          agentIds: { en: 'agent_a', ru: 'agent_b' },
+        },
+      ]);
+      await expect(directory.findAgentId('v', 'en')).resolves.toBe('agent_a');
+      await expect(directory.findAgentId('v', 'ru')).resolves.toBe('agent_b');
+    });
+
+    it('returns null for hidden cases, missing ids, unknown and odd case ids', async () => {
+      await seedCases(dataSource.manager, [
+        { ...fixture('hid', ['en']), agentIds: { en: 'agent_a' } },
+        { ...fixture('half', ['en', 'ru']), agentIds: { en: 'agent_a' } },
+      ]);
+      await expect(directory.findAgentId('hid', 'en')).resolves.toBeNull();
+      await expect(directory.findAgentId('half', 'en')).resolves.toBe(
+        'agent_a',
+      );
+      await expect(directory.findAgentId('half', 'ru')).resolves.toBeNull();
+      for (const odd of [
+        'missing',
+        '',
+        '\u0000',
+        "x'; DROP TABLE a;--",
+        'x'.repeat(5000),
+      ]) {
+        await expect(directory.findAgentId(odd, 'en')).resolves.toBeNull();
+      }
+    });
+
+    it('never puts the id into the catalog projection', async () => {
+      await seedCases(dataSource.manager, [
+        { ...fixture('p', ['en', 'ru']), agentIds: { en: 'secret-agent-id' } },
+      ]);
+      const found = await catalog.findVisibleById('p');
+      expect(JSON.stringify(found?.localize('en'))).not.toContain(
+        'secret-agent-id',
+      );
+    });
+  });
+
   it('can be reverted', async () => {
+    await dataSource.undoLastMigration();
     await dataSource.undoLastMigration();
     const tables = await dataSource.query(
       `SELECT 1 FROM information_schema.tables WHERE table_schema = 'case_library'`,

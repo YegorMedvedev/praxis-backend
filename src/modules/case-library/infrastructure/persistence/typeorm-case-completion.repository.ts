@@ -5,6 +5,7 @@ import type {
   CaseCompletion,
   CaseCompletionRepository,
 } from '../../domain/case-completion';
+import { activeRepository } from '../../../../platform/database/transaction-context';
 import { CaseCompletionOrmEntity } from './case-completion.orm-entity';
 
 const toDomain = (row: CaseCompletionOrmEntity): CaseCompletion => ({
@@ -25,7 +26,9 @@ export class TypeOrmCaseCompletionRepository implements CaseCompletionRepository
     row.userId = completion.userId;
     row.caseId = completion.caseId;
     row.completedAt = completion.completedAt;
-    const result = await this.rows
+    // Joins the caller's transaction when one is active (a session ending in
+    // another module records its completion atomically with the end).
+    const result = await activeRepository(this.rows)
       .createQueryBuilder()
       .insert()
       .values(row)

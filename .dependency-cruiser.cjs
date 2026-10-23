@@ -116,6 +116,17 @@ module.exports = {
       to: { path: 'node_modules/(@nestjs/)?typeorm(/|$)' },
     },
     {
+      name: '9-openai-only-in-chat-simulation-infrastructure',
+      severity: 'error',
+      comment:
+        'The openai SDK is imported only under src/modules/chat-simulation/infrastructure/.',
+      from: {
+        path: '^src/',
+        pathNot: '^src/modules/chat-simulation/infrastructure/',
+      },
+      to: { path: 'node_modules/openai(/|$)' },
+    },
+    {
       name: '7-no-circular',
       severity: 'error',
       comment: 'No cycles between files.',

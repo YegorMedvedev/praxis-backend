@@ -44,6 +44,15 @@ export const PROBLEMS: Record<ProblemName, ProblemDefinition> = {
   'account-disabled': { status: 403, title: 'Account Disabled' },
   'profile-not-found': { status: 404, title: 'Profile Not Found' },
   'case-not-found': { status: 404, title: 'Case Not Found' },
+  'session-not-found': { status: 404, title: 'Session Not Found' },
+  'session-ended': { status: 409, title: 'Session Ended' },
+  'reply-pending': { status: 409, title: 'Reply Pending' },
+  'no-reply-pending': { status: 409, title: 'No Reply Pending' },
+  'reply-generation-failed': {
+    status: 502,
+    title: 'Reply Generation Failed',
+    detail: 'The patient reply could not be produced.',
+  },
   'invalid-request': { status: 400, title: 'Invalid Request' },
   'rate-limited': { status: 429, title: 'Too Many Requests' },
   'internal-error': {
@@ -75,4 +84,25 @@ export interface ProblemDetails {
 
 export function problemType(name: ProblemName): string {
   return `${PROBLEM_TYPE_BASE}${name}`;
+}
+
+/**
+ * A complete problem object for a stable name. Used where the problem is not
+ * an HTTP response body (the SSE `error` event), so the mapping from name to
+ * status, type and title still lives in this one table.
+ */
+export function toProblem(
+  name: ProblemName,
+  instance: string,
+  flowId: string,
+): ProblemDetails {
+  const { status, title, detail } = PROBLEMS[name];
+  return {
+    type: problemType(name),
+    title,
+    status,
+    ...(detail ? { detail } : {}),
+    instance,
+    flow_id: flowId,
+  };
 }
