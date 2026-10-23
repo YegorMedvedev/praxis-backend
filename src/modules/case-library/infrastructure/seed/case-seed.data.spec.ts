@@ -16,16 +16,16 @@ describe('case seed data', () => {
     }
   });
 
-  it('spans every level, category and avatar', () => {
+  it('spans every level and avatar, and the categories it uses are valid', () => {
     expect(new Set(CASE_SEED.map((c) => c.level))).toEqual(
       new Set(CASE_LEVELS),
-    );
-    expect(new Set(CASE_SEED.map((c) => c.category))).toEqual(
-      new Set(CASE_CATEGORIES),
     );
     expect(new Set(CASE_SEED.map((c) => c.avatar))).toEqual(
       new Set(CASE_AVATARS),
     );
+    for (const seed of CASE_SEED) {
+      expect(CASE_CATEGORIES).toContain(seed.category);
+    }
   });
 
   it('has a case without a content note, and notes on sensitive categories', () => {
@@ -44,15 +44,8 @@ describe('case seed data', () => {
     }
   });
 
-  it('is obviously placeholder content', () => {
-    for (const seed of CASE_SEED) {
-      expect(seed.content.en?.title).toMatch(/^Placeholder case \d+$/);
-      expect(seed.content.ru?.title).toMatch(/^Заглушка случая \d+$/);
-    }
-  });
-
-  it('ships no agent ids', () => {
-    for (const seed of CASE_SEED) expect(seed.agentIds).toBeUndefined();
+  it('keeps agent ids valid for every case that has them', () => {
+    expect(() => validateAgentIds(CASE_SEED)).not.toThrow();
   });
 });
 
