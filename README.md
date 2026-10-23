@@ -45,6 +45,23 @@ pnpm start:dev
 
 `docker compose down` stops it; add `-v` to also delete the data volume.
 
+## Seeding cases
+
+The case library is read-only through the API, so its content is loaded by a script. The source of truth is
+`src/modules/case-library/infrastructure/seed/case-seed.data.ts` (currently 6 placeholder cases, each with `en` and `ru` content).
+
+```bash
+pnpm migration:run   # the case_library tables must exist first
+pnpm seed:cases      # uses the same DB_* variables as the app
+```
+
+- It is never run on boot or by the migrations; run it by hand per environment.
+- It is an idempotent upsert in one transaction: re-running leaves the same rows, and editing the seed file then re-running updates them.
+  Catalog order follows the array order.
+- It never deletes. A case or translation removed from the file stays in the database until you delete it manually.
+- A case missing either language is hidden from the API.
+- Case ids are opaque and must never change once shipped.
+
 ## Compile and run the project
 
 ```bash
