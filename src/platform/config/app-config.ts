@@ -26,6 +26,8 @@ export interface AppConfig {
   RESEND_API_KEY: string;
   /** Resend-verified sender address for reset emails. */
   PASSWORD_RESET_EMAIL_FROM: string;
+  /** OpenAI API credential for the chat patient agents (a secret; no default). */
+  OPENAI_API_KEY: string;
   /** Requests per client IP per window on POST /auth/password-reset. */
   PASSWORD_RESET_RATE_LIMIT: number;
   PASSWORD_RESET_RATE_WINDOW_MS: number;
@@ -202,6 +204,11 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     problems.push('RESEND_API_KEY is required');
   }
 
+  const openAiKey = raw.OPENAI_API_KEY;
+  if (typeof openAiKey !== 'string' || openAiKey.trim().length === 0) {
+    problems.push('OPENAI_API_KEY is required');
+  }
+
   const resetFrom = raw.PASSWORD_RESET_EMAIL_FROM;
   if (typeof resetFrom !== 'string' || !EMAIL_ADDRESS.test(resetFrom.trim())) {
     problems.push(
@@ -294,6 +301,7 @@ export function validateEnv(raw: Record<string, unknown>): AppConfig {
     CORS_ALLOWED_ORIGINS: corsOrigins,
     CORS_MAX_AGE_SECONDS: corsMaxAge,
     RESEND_API_KEY: (resendKey as string).trim(),
+    OPENAI_API_KEY: (openAiKey as string).trim(),
     PASSWORD_RESET_EMAIL_FROM: (resetFrom as string).trim(),
     PASSWORD_RESET_RATE_LIMIT: resetLimit as number,
     PASSWORD_RESET_RATE_WINDOW_MS: resetWindow as number,

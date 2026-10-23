@@ -83,6 +83,7 @@ describe('Application (e2e)', () => {
     process.env.CORS_ALLOWED_ORIGINS = 'https://app.example.test';
     process.env.APP_BASE_URL = APP_BASE_URL;
     process.env.RESEND_API_KEY = RESEND_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-e2e-fake-key-do-not-leak';
     process.env.PASSWORD_RESET_EMAIL_FROM = 'no-reply@mail.example.test';
     // Generous here; the 429 test builds its own app with a small limiter.
     process.env.PASSWORD_RESET_RATE_LIMIT = '1000';

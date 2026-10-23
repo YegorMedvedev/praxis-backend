@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import type { AppConfig } from '../../../platform/config/app-config';
 import { CaseLibraryModule } from '../../case-library/case-library.public-api';
 import {
   CASE_AGENT_DIRECTORY,
@@ -22,8 +24,11 @@ import { TypeOrmMessageRepository } from './persistence/typeorm-message.reposito
 import { TypeOrmSessionDeletionQueue } from './persistence/typeorm-session-deletion-queue';
 import { TypeOrmSessionRepository } from './persistence/typeorm-session.repository';
 import { TypeOrmUnitOfWork } from './persistence/typeorm-unit-of-work';
-import { UnconfiguredPatientReplyGenerator } from './remote/unconfigured-patient-reply-generator';
-import { UnconfiguredRemoteSessionRemover } from './remote/unconfigured-remote-session-remover';
+import { OpenAiPatientReplyGenerator } from './remote/openai-patient-reply-generator';
+import { OpenAiRemoteSessionRemover } from './remote/openai-remote-session-remover';
+import type { OpenAiAgentsClient } from './remote/openai-agents-client';
+import { OPENAI_AGENTS_CLIENT } from './remote/openai.tokens';
+import { createOpenAiAgentsClient } from './remote/sdk-openai-agents-client';
 
 @Module({
   imports: [
@@ -47,16 +52,26 @@ import { UnconfiguredRemoteSessionRemover } from './remote/unconfigured-remote-s
       provide: CASE_COMPLETION_RECORDER,
       useClass: CaseLibraryCompletionRecorder,
     },
-    // Placeholders, both replaced by task 07 (the OpenAI adapters). Neither
-    // fakes content: the remover fails (the worker retries) and the generator
-    // fails every reply with `reply-generation-failed`.
+    // The OpenAI adapters (task 07). Constructing the SDK client makes no
+    // network call. Tests and e2e override PATIENT_REPLY_GENERATOR and
+    // REMOTE_SESSION_REMOVER with fakes and never reach OpenAI.
+    {
+      provide: OPENAI_AGENTS_CLIENT,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<AppConfig, true>) =>
+        createOpenAiAgentsClient(config.get('OPENAI_API_KEY', { infer: true })),
+    },
     {
       provide: REMOTE_SESSION_REMOVER,
-      useValue: new UnconfiguredRemoteSessionRemover(),
+      inject: [OPENAI_AGENTS_CLIENT],
+      useFactory: (client: OpenAiAgentsClient) =>
+        new OpenAiRemoteSessionRemover(client),
     },
     {
       provide: PATIENT_REPLY_GENERATOR,
-      useValue: new UnconfiguredPatientReplyGenerator(),
+      inject: [OPENAI_AGENTS_CLIENT],
+      useFactory: (client: OpenAiAgentsClient) =>
+        new OpenAiPatientReplyGenerator(client),
     },
   ],
   exports: [

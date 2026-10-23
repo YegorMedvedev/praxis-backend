@@ -260,11 +260,52 @@ when touching the area.
   `ProcessSessionDeletions`, which deletes via the `RemoteSessionRemover` port and retries with
   exponential backoff (30 s doubling, cap 1 h). It is idempotent and never blocks or fails
   session removal.
-- **Placeholders until later tasks.** `REMOTE_SESSION_REMOVER` is bound to
-  `UnconfiguredRemoteSessionRemover` (always fails, so nothing is ever reported deleted; safe
-  because no session has an `openai_session_id` before task 07 replaces it). The
-  `SessionGenerationCanceller` is the in-process `GenerationRegistry` (see "Chat simulation:
-  messages and reply streaming" below).
+- `REMOTE_SESSION_REMOVER` is `OpenAiRemoteSessionRemover` (see "OpenAI configuration").
+  The `SessionGenerationCanceller` is the in-process `GenerationRegistry` (see "Chat
+  simulation: messages and reply streaming" below).
+
+## OpenAI configuration
+
+- The patient is a saved OpenAI **Agents API** agent (instructions only, no tools), one per
+  case and language (agent ids live in case-library seed data). All OpenAI code lives in
+  `chat-simulation/infrastructure/remote/` behind the `PatientReplyGenerator` and
+  `RemoteSessionRemover` ports; dependency-cruiser rule 9 fails `pnpm test:arch` if any
+  other file imports `openai`. The adapters depend on the small `OpenAiAgentsClient`
+  interface; `sdk-openai-agents-client.ts` is its only implementation over the SDK.
+- `OPENAI_API_KEY` is required at boot and secret (no default, never logged). Unit,
+  integration and e2e tests use a dummy value and fakes, and never reach OpenAI. No other
+  OpenAI variables exist: timeouts belong to the application layer and SDK retries are
+  off (a retry could duplicate input; "Try again" is the client's decision).
+- The installed `openai` SDK (see `package.json`) selects the saved agent with `agent_id`
+  (its `agent` object carries per-session overrides only and has no `id`); no overrides are
+  sent. The session is created with `environment: { type: 'none' }`. Follow-ups use
+  `sessions.stream()`, which subscribes to events before sending the input with an
+  idempotency key derived from the therapist message id.
+- The adapter yields `remote-session` before the first text of a new remote session and
+  honours the abort signal (closes the stream, best-effort `agent.session.input.cancel`);
+  persistence of `openai_session_id` / `remote_in_sync` stays in the application layer. The
+  remote session is a cache: when it is missing or out of sync, a new one is created and the
+  stored transcript is replayed (`formatTranscriptForReplay`).
+- `placeholder-prompts.ts` holds the PLACEHOLDER opening input and replay wording; the
+  product owner must approve them (HUMAN-REQUIRED).
+- Logs carry session id, event type counts, durations, time to first delta, HTTP status,
+  OpenAI request id and error class only. A 401/403 from OpenAI also logs
+  `openai_auth_failed`; alert on it and on `reply_generation_failed`.
+- The SDK client is built with a fixed base URL, no organization/project and `logLevel:
+  'off'`, so stray `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID` or `OPENAI_LOG`
+  variables can neither redirect the key and transcripts nor enable request-body logging.
+- Known gaps: a new remote session that is aborted or fails before its first event carrying a
+  session id is never tracked, so it is not queued for deletion (only provider expiry removes
+  it). Delta events carry no subagent flag; the adapter learns subagent turn ids from
+  `turn.*` events (the agents have no subagents, so this is defensive). A text/delta mismatch
+  is detected only at `turn.completed`, after the deltas were already streamed; the stream
+  then ends in an error and the client must treat the reply as failed.
+- Accepted trade-offs: OpenAI retains session state (no zero data retention), US-only
+  residency, remote deletion is asynchronous, and single-flight is per instance.
+- `pnpm test:agents` is an opt-in smoke test against the real API (never in `test:all` or CI,
+  never run by automation). It needs `OPENAI_API_KEY`, `SMOKE_AGENT_ID_EN` and/or
+  `SMOKE_AGENT_ID_RU`; each language is skipped without its id. It makes billable calls,
+  deletes the remote sessions it creates and prints no reply text.
 
 ## Public endpoints
 
@@ -320,9 +361,8 @@ lowercased address) are all silent; only the stage and error class are logged as
   lock or a `generating_since` column) first. The stored-reply step re-checks the
   transcript under the session row lock, so a second reply is still never stored.
 - The reply generator sits behind the `PatientReplyGenerator` port. Tests bind
-  `FakePatientReplyGenerator` (`application/fakes.ts`). The production binding until task
-  07 is `UnconfiguredPatientReplyGenerator`, which fails every reply with
-  `reply-generation-failed` and never fakes content. The application layer, not the
+  `FakePatientReplyGenerator` (`application/fakes.ts`). The production binding is
+  `OpenAiPatientReplyGenerator` (see "OpenAI configuration"). The application layer, not the
   adapter, persists `openai_session_id` and `remote_in_sync` (set false before each
   generation, true only when the reply is stored) and queues a replaced remote session for
   deletion.

@@ -10,6 +10,7 @@ const base = {
   CONSENT_PRIVACY_VERSIONS: 'P1',
   APP_BASE_URL: 'https://app.example.test',
   RESEND_API_KEY: 're_fake_key',
+  OPENAI_API_KEY: 'sk-fake-key',
   PASSWORD_RESET_EMAIL_FROM: 'no-reply@mail.example.test',
 };
 
@@ -31,6 +32,7 @@ describe('validateEnv', () => {
       CONSENT_PRIVACY_VERSIONS: ['P1'],
       APP_BASE_URL: 'https://app.example.test',
       RESEND_API_KEY: 're_fake_key',
+      OPENAI_API_KEY: 'sk-fake-key',
       PASSWORD_RESET_EMAIL_FROM: 'no-reply@mail.example.test',
       PASSWORD_RESET_RATE_LIMIT: 5,
       PASSWORD_RESET_RATE_WINDOW_MS: 60_000,
@@ -83,6 +85,22 @@ describe('validateEnv', () => {
       expect(() => validateEnv({ ...base, RESEND_API_KEY: value })).toThrow(
         'RESEND_API_KEY is required',
       );
+    });
+
+    it.each([undefined, '', '   '])('requires OPENAI_API_KEY (%p)', (value) => {
+      expect(() => validateEnv({ ...base, OPENAI_API_KEY: value })).toThrow(
+        'OPENAI_API_KEY is required',
+      );
+    });
+
+    it('never echoes the OpenAI key', () => {
+      let message = '';
+      try {
+        validateEnv({ ...base, OPENAI_API_KEY: '', DB_HOST: '' });
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).not.toContain('sk-fake-key');
     });
 
     it('never echoes the sender or key values', () => {

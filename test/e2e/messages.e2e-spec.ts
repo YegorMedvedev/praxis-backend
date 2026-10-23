@@ -237,6 +237,7 @@ describe('messages and patient replies (e2e)', () => {
     process.env.CORS_ALLOWED_ORIGINS = 'https://app.example.test';
     process.env.APP_BASE_URL = 'http://app.example.test';
     process.env.RESEND_API_KEY = 're_e2e_fake_key_do_not_leak';
+    process.env.OPENAI_API_KEY = 'sk-e2e-fake-key-do-not-leak';
     process.env.PASSWORD_RESET_EMAIL_FROM = 'no-reply@mail.example.test';
 
     const migrator = await new DataSource({
