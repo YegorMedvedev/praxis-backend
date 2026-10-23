@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import {
   AccountDisabledError,
+  CaseNotFoundError,
   ConflictError,
   IncompleteIdentityError,
   InvalidRequestError,
@@ -92,6 +93,7 @@ describe('ProblemDetailsFilter', () => {
     [new IncompleteIdentityError('no email'), 403, 'incomplete-identity'],
     [new AccountDisabledError('disabled'), 403, 'account-disabled'],
     [new ProfileNotFoundError('none'), 404, 'profile-not-found'],
+    [new CaseNotFoundError('none'), 404, 'case-not-found'],
     [new InvalidRequestError('bad'), 400, 'invalid-request'],
     [new ServiceUnavailableError('down'), 503, 'service-unavailable'],
     [new NotFoundException(), 404, 'not-found'],

@@ -215,6 +215,17 @@ when touching the area.
 - `POST /api/v1/auth/password-reset` is an action-shaped path, not a resource noun. The
   path is fixed by the frontend's existing contract; this is a deliberate exception.
 
+## Case library
+
+- `case-library` owns the curated, read-only case catalog and per-user completion
+  (schema `case_library`). A case is **visible** only with complete content in both `en`
+  and `ru`; hidden cases are excluded everywhere (lists, detail, progress counts).
+- Completion is written only by the server: other modules call `RecordCaseCompletion`
+  from `case-library.public-api.ts` (idempotent, first `completed_at` wins). There is no
+  HTTP write endpoint. `GET /api/v1/me/case-progress` is the read side.
+- Content is loaded by `pnpm seed:cases` (idempotent upsert, never auto-run, never deletes).
+  The shipped seed is placeholder content only.
+
 ## Public endpoints
 
 Every route requires a Firebase bearer token except those marked `@Public()`
