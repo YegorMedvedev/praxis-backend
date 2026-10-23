@@ -6,7 +6,7 @@ Specs 03 and 04 of this milestone are app-side and are not part of this ledger.
 
 | Task | Status | Commit | Notes |
 |---|---|---|---|
-| 06 case-patient-agent-mapping | todo | | |
+| 06 case-patient-agent-mapping | done | PENDING | lint/test/arch/integration/e2e green. Seed also rejects an id for a language with no content. Real agent ids still human-required. |
 | 01 session-lifecycle-api (includes cleanup queue + worker with a fake remover) | todo | | Patient-ended parts (FR-5, AC-8) deferred by decision. |
 | 02 patient-message-exchange-streaming (fake generator only) | todo | | `session.ended`, FR-6, AC-7 deferred; AC-12 moved to 07/HUMAN-REQUIRED. |
 | 07 openai-agents-reply-generator | todo | | Contract tests against a fake client only; no real OpenAI calls by agents. |

@@ -225,6 +225,13 @@ when touching the area.
   HTTP write endpoint. `GET /api/v1/me/case-progress` is the read side.
 - Content is loaded by `pnpm seed:cases` (idempotent upsert, never auto-run, never deletes).
   The shipped seed is placeholder content only.
+- Each case translation may carry a server-only patient `agent_id` (one OpenAI agent per
+  case and language). Other modules look it up with `ResolvePatientAgent` from
+  `case-library.public-api.ts` (`{ caseId, language }` -> `{ agentId } | null`; null for
+  unknown, hidden or unconfigured). It is never in `Case`/`LocalizedCase`, any response or
+  any log. The seed takes it as `agentIds?: { en?, ru? }` per case, validated up front
+  (non-blank, <= 128 chars, no whitespace/control characters); an omitted id leaves the
+  stored one untouched. The shipped seed has none.
 
 ## Public endpoints
 

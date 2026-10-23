@@ -10,6 +10,7 @@ import { DataSource } from 'typeorm';
 import type { RecordCaseCompletion as RecordCaseCompletionType } from '../../src/modules/case-library/case-library.public-api';
 import type { SeedCase } from '../../src/modules/case-library/infrastructure/seed/case-seed.data';
 import { seedCases } from '../../src/modules/case-library/infrastructure/seed/case-seeder';
+import { AddCaseTranslationAgentId1760000002000 } from '../../src/platform/database/migrations/1760000002000-AddCaseTranslationAgentId';
 import { CreateCaseLibrary1760000001000 } from '../../src/platform/database/migrations/1760000001000-CreateCaseLibrary';
 import { CreateUsersProfiles1760000000000 } from '../../src/platform/database/migrations/1760000000000-CreateUsersProfiles';
 import { configureApp } from '../../src/platform/http/configure-app';
@@ -74,6 +75,7 @@ describe('GET /me/case-progress (e2e)', () => {
       migrations: [
         CreateUsersProfiles1760000000000,
         CreateCaseLibrary1760000001000,
+        AddCaseTranslationAgentId1760000002000,
       ],
     }).initialize();
     await migrator.runMigrations();

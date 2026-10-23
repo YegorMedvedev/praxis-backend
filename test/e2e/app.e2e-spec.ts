@@ -16,6 +16,7 @@ import {
 import type { InProcessBackgroundRunner } from '../../src/modules/auth/infrastructure/in-process-background-runner';
 import { RateLimiter } from '../../src/platform/http/rate-limiter';
 import { CreateUsersProfiles1760000000000 } from '../../src/platform/database/migrations/1760000000000-CreateUsersProfiles';
+import { AddCaseTranslationAgentId1760000002000 } from '../../src/platform/database/migrations/1760000002000-AddCaseTranslationAgentId';
 import { CreateCaseLibrary1760000001000 } from '../../src/platform/database/migrations/1760000001000-CreateCaseLibrary';
 import {
   applyTrustProxy,
@@ -93,6 +94,7 @@ describe('Application (e2e)', () => {
       migrations: [
         CreateUsersProfiles1760000000000,
         CreateCaseLibrary1760000001000,
+        AddCaseTranslationAgentId1760000002000,
       ],
     }).initialize();
     await migrator.runMigrations();

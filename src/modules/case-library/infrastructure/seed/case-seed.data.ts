@@ -14,6 +14,12 @@ export interface SeedCase {
   patientAge: number;
   /** A case missing a language is stored but hidden by the visibility rule. */
   content: Partial<Record<Language, CaseContent>>;
+  /**
+   * Server-only patient agent id per language, kept apart from `content`.
+   * Omitting a language leaves any stored id untouched. Real ids are a human
+   * deliverable (HUMAN-REQUIRED.md); the placeholder seed has none.
+   */
+  agentIds?: Partial<Record<Language, string>>;
 }
 
 /**

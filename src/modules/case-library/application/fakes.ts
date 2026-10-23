@@ -4,6 +4,8 @@ import type {
   CaseCompletion,
   CaseCompletionRepository,
 } from '../domain/case-completion';
+import type { Language } from '../domain/language';
+import type { PatientAgentDirectory } from '../domain/patient-agent-directory';
 
 /** In-memory fakes for use case tests. */
 export class InMemoryCaseCatalog implements CaseCatalog {
@@ -61,6 +63,23 @@ export class InMemoryCaseCompletionRepository implements CaseCompletionRepositor
       this.completions.get(
         InMemoryCaseCompletionRepository.key(userId, caseId),
       ) ?? null,
+    );
+  }
+}
+
+export class InMemoryPatientAgentDirectory implements PatientAgentDirectory {
+  constructor(
+    private readonly cases: Case[],
+    private readonly agentIds: Record<
+      string,
+      Partial<Record<Language, string>>
+    >,
+  ) {}
+
+  findAgentId(caseId: string, language: Language): Promise<string | null> {
+    const found = this.cases.find((c) => c.id === caseId && c.isVisible());
+    return Promise.resolve(
+      found ? (this.agentIds[caseId]?.[language] ?? null) : null,
     );
   }
 }

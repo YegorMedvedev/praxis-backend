@@ -59,6 +59,10 @@ export class CaseTranslationOrmEntity {
   @Column({ name: 'content_note', type: 'text', nullable: true })
   contentNote!: string | null;
 
+  /** Server-only patient agent id. Never mapped into the domain `Case`. */
+  @Column({ name: 'agent_id', type: 'varchar', length: 128, nullable: true })
+  agentId!: string | null;
+
   @ManyToOne(() => CaseOrmEntity, (c) => c.translations)
   @JoinColumn({ name: 'case_id' })
   case?: CaseOrmEntity;

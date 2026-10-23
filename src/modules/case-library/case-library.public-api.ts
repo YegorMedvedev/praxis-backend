@@ -5,3 +5,11 @@ export type {
   CaseCompletionRecorder,
   RecordCaseCompletionCommand,
 } from './application/record-case-completion';
+// Server-only lookup of the patient agent for a case; never exposed over HTTP.
+export { ResolvePatientAgent } from './application/resolve-patient-agent';
+export type {
+  PatientAgentResolution,
+  PatientAgentResolver,
+  ResolvePatientAgentQuery,
+} from './application/resolve-patient-agent';
+export type { Language } from './domain/language';

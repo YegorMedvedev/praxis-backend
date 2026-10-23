@@ -4,13 +4,16 @@ import type { Clock } from '../../shared/clock';
 import { GetCase } from './application/get-case';
 import { GetCaseProgress } from './application/get-case-progress';
 import { ListCases } from './application/list-cases';
+import { ResolvePatientAgent } from './application/resolve-patient-agent';
 import { RecordCaseCompletion } from './application/record-case-completion';
 import {
   CASE_CATALOG,
   CASE_COMPLETION_REPOSITORY,
+  PATIENT_AGENT_DIRECTORY,
 } from './case-library.tokens';
 import type { CaseCatalog } from './domain/case-catalog';
 import type { CaseCompletionRepository } from './domain/case-completion';
+import type { PatientAgentDirectory } from './domain/patient-agent-directory';
 import { CaseLibraryInfrastructureModule } from './infrastructure/case-library-infrastructure.module';
 import { CaseProgressController } from './presentation/case-progress.controller';
 import { CasesController } from './presentation/cases.controller';
@@ -51,9 +54,15 @@ import { varyLanguageMiddleware } from './presentation/vary-language.middleware'
       useFactory: (completions: CaseCompletionRepository, clock: Clock) =>
         new RecordCaseCompletion(completions, clock),
     },
+    {
+      provide: ResolvePatientAgent,
+      inject: [PATIENT_AGENT_DIRECTORY],
+      useFactory: (directory: PatientAgentDirectory) =>
+        new ResolvePatientAgent(directory),
+    },
   ],
-  // Exported for other modules (via the public API) that record completions.
-  exports: [RecordCaseCompletion],
+  // Exported for other modules (via the public API).
+  exports: [RecordCaseCompletion, ResolvePatientAgent],
 })
 export class CaseLibraryModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
