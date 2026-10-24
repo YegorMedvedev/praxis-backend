@@ -2,12 +2,25 @@ import { existsSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { DataSource } from 'typeorm';
 
-if (existsSync('.env')) {
+// ENV_FILE selects exactly one env file (e.g. ENV_FILE=.env.staging) and it must exist,
+// so a missing file never silently falls back to the local `.env`.
+const envFile = process.env.ENV_FILE;
+if (envFile) {
+  if (!existsSync(envFile)) {
+    throw new Error(`ENV_FILE ${envFile} does not exist`);
+  }
+  process.loadEnvFile(envFile);
+} else if (existsSync('.env')) {
   process.loadEnvFile('.env');
 }
 
 // `ts` under ts-node, `js` from compiled output (which also holds `.d.ts` files).
 const ext = extname(__filename).slice(1);
+
+// Set DB_SSL=true for hosts that require TLS (e.g. Render's external database URL). The
+// certificate is not verified, like `sslmode=require`. CLI only; the app uses internal hosts.
+const ssl =
+  process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false;
 
 /**
  * Used by the TypeORM CLI (`pnpm migration:*`); the app uses DatabaseModule.
@@ -21,6 +34,7 @@ export default new DataSource({
   username: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
+  ssl,
   entities: [
     join(__dirname, `../../modules/*/infrastructure/**/*.orm-entity.${ext}`),
   ],
