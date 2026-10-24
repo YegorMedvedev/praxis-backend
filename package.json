@@ -26,6 +26,7 @@
     "typeorm": "typeorm-ts-node-commonjs -d src/platform/database/data-source.ts",
     "migration:run": "pnpm typeorm migration:run",
     "migration:generate": "pnpm typeorm migration:generate",
+    "migration:run:prod": "typeorm migration:run -d dist/platform/database/data-source.js",
     "migration:revert": "pnpm typeorm migration:revert",
     "seed:cases": "ts-node src/modules/case-library/infrastructure/seed/run-seed.ts"
   },

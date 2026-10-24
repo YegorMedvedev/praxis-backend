@@ -120,6 +120,17 @@ describe('Application (e2e)', () => {
     await emulator?.container.stop();
   });
 
+  describe('health', () => {
+    it('answers the liveness probe without a token', async () => {
+      const response = await request(server())
+        .get('/api/v1/health')
+        .expect(200)
+        .expect('Cache-Control', 'no-store');
+
+      expect(response.body).toEqual({ status: 'ok' });
+    });
+  });
+
   describe('framework errors', () => {
     it('answers an unknown route with a problem+json 404', async () => {
       const response = await request(server())

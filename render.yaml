@@ -1,0 +1,47 @@
+# Render Blueprint for the staging environment. The database already exists in Render.
+# Deploys are started only by the GitHub Actions workflow (autoDeploy: false).
+services:
+  - type: web
+    name: praxis-backend-staging
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    autoDeployTrigger: off
+    # Pre-deploy commands need a paid instance type.
+    plan: starter
+    healthCheckPath: /api/v1/health
+    # Runs inside Render's network, before traffic switches to the new version.
+    preDeployCommand: node_modules/.bin/typeorm migration:run -d dist/platform/database/data-source.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY_HOPS
+        value: '1'
+      # Replace with the existing database's name; use its internal connection details.
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: '5432'
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: CONSENT_TERMS_VERSIONS
+        sync: false
+      - key: CONSENT_PRIVACY_VERSIONS
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: PASSWORD_RESET_EMAIL_FROM
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false

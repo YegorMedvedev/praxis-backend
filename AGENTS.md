@@ -339,8 +339,9 @@ when touching the area.
 ## Public endpoints
 
 Every route requires a Firebase bearer token except those marked `@Public()`
-(`platform/auth/public.decorator.ts`). Today that is only
-`POST /api/v1/auth/password-reset`. Its request body is `{ "email", "language"? }`
+(`platform/auth/public.decorator.ts`). Today that is
+`POST /api/v1/auth/password-reset` and the liveness probe `GET /api/v1/health`
+(`platform/system`, body `{"status":"ok"}`, no dependency checks). The password-reset request body is `{ "email", "language"? }`
 (`language` is `en` or `ru`, default `en`; an assumption, no spec defines it). It answers
 `202 Accepted` with an empty body for any well-formed request and does ALL work (Firebase
 link generation, Resend send) afterwards in an in-process background runner, so neither the
