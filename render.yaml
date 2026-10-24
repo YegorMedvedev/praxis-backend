@@ -1,11 +1,11 @@
 # Render Blueprint for the staging environment. The database already exists in Render.
-# Deploys are started only by the GitHub Actions workflow (autoDeploy: false).
+# Render deploys a push to the branch only after its GitHub checks (the CI workflow) pass.
 services:
   - type: web
     name: praxis-backend-staging
     runtime: docker
     dockerfilePath: ./Dockerfile
-    autoDeployTrigger: off
+    autoDeployTrigger: checksPass
     # Pre-deploy commands need a paid instance type.
     plan: starter
     healthCheckPath: /api/v1/health

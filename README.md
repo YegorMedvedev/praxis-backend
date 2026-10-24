@@ -147,13 +147,13 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 ## CI/CD (staging)
 
 `.github/workflows/ci.yml` runs lint, unit, architecture, build (including the Docker image),
-integration and e2e on every pull request and push to `main`. A push to `main` that passes
-every job triggers the `staging` deploy to Render through a deploy hook.
+integration and e2e on every pull request and push to `main`. Render deploys `main` to
+staging only after those checks pass (Auto-Deploy: "After CI Checks Pass").
 
-- **GitHub:** create a `staging` environment with the secret `RENDER_DEPLOY_HOOK_URL`
-  (Render service → Settings → Deploy Hook).
-- **Render:** `render.yaml` describes the service (Docker, auto-deploy off, health check
-  `/api/v1/health`). Set the runtime variables listed there in Render, not in GitHub. Use the
-  database's internal host. The pre-deploy command applies migrations before traffic switches;
-  it needs a paid instance type. `TRUST_PROXY_HOPS=1` is required behind Render's proxy.
+- **Render:** `render.yaml` describes the service (Docker, deploy after checks pass, health
+  check `/api/v1/health`). Set the runtime variables listed there in Render, not in GitHub.
+  Use the database's internal host. The pre-deploy command applies migrations before traffic
+  switches; it needs a paid instance type. `TRUST_PROXY_HOPS=1` is required behind Render's
+  proxy.
+- **GitHub:** no secrets are needed.
 - Local check: `docker build .`

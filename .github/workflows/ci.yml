@@ -1,4 +1,4 @@
-name: CI/CD
+name: CI
 
 on:
   pull_request:
@@ -92,22 +92,3 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:e2e
-
-  deploy-staging:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [lint, unit, arch, build, integration, e2e]
-    runs-on: ubuntu-latest
-    environment: staging
-    # Never cancel a deploy midway; queue the next one instead.
-    concurrency:
-      group: deploy-staging
-      cancel-in-progress: false
-    steps:
-      # Render auto-deploy is off, so this hook is the only way a deploy starts.
-      # Render then builds the image, runs the pre-deploy migration and health check.
-      - name: Trigger the Render deploy
-        env:
-          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-        run: |
-          test -n "$RENDER_DEPLOY_HOOK_URL" || { echo "RENDER_DEPLOY_HOOK_URL is not set"; exit 1; }
-          curl --fail --silent --show-error --output /dev/null -X POST "${RENDER_DEPLOY_HOOK_URL}&ref=${GITHUB_SHA}"
